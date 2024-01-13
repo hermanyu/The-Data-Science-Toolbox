@@ -1,0 +1,413 @@
+
+```{r setup, warning = FALSE, }
+options(scipen = 999)
+SEED = 123
+
+library(rethinking)
+library(dplyr)
+library(ggplot2)
+```
+
+# 04 Markov Chain Monte Carlo (MCMC)
+
+<br>
+
+---
+
+<br>
+
+
+# Introduction
+
+When computing the posterior:
+
+$$
+p(\theta|X) = \frac{p(\theta) p(X|\theta)}{\int p(X|\theta)p(\theta)\,d\theta}
+$$
+
+the road block is usually the integral in the denominator. **Markov chain monte carlo (MCMC)** is a method of computing the posterior by side-stepping the denominator entirely: MCMC directly samples the posterior by using just the numerator. The samples are then collected into an **empirical distribution** , i.e. a histogram, that approximates the posterior distribution.
+
+Intuitively, MCMC can be visualized as a *random walk* through the parameter space of $\theta$, where the direction of the next step is randomly chosen according to the numerator $p(\theta)p(X|theta)$. If $p(\theta)p(X|theta)$ is large, then the walk is more likely to traverse in that direction. If $p(\theta)p(X|theta)$ is low, the walk is less likely to traverse in that direction. As the walk traverses to points in the parameter space $\theta$, those points are considered sampled values of $\theta$. The random walk aspect is what makes it a **Markov chain** and the random sampling aspect is what makes it a **monte carlo** method.
+
+Because MCMC is fundamentally a random walk, the output will change each time MCMC is run. As such, we often need to repeat multiple random walks and combine the results to get a more robust answer. Each random walk is called a **chain** and MCMC algorithms usually execute multiple chains in parallel. Ideally, all the chains will "converge" to the same distribution of samples values, which indicates that the random walk has done a good job generating a representative sample of the posterior distribution.
+
+<br>
+
+---
+
+<br>
+
+# 4.1 Methods Of Computing The Posterior Distribution
+
+The key challenge of Bayesian statistical modeling has always been the thorny issue of computing the posterior:
+
+$$
+p(\theta|X) = \frac{p(\theta) p(X|\theta)}{\int p(X|\theta)p(\theta)\,d\theta}
+$$
+
+Even if we have formulas for $p(\theta)$ and $p(X|\theta)$, the integral in the denominator is almost impossible to compute directly using pure mathematical analysis. This severely limited the usefulness of Bayesian statistics in the early days, since almost all Bayesian models would get stuck at this point of the modeling process. Bayesian statistics only began to gain traction with the rise of computing power, where it became possible to numerically approximate the integral in the denominator.
+
+To summarize, here are the general ways to compute the posterior distribution:
+
+1) **Analytically**: if the prior $p(\theta)$ and the likelihood $p(X|\theta)$ are simple and play nice together, than the integral $\int p(X|\theta)p(\theta)\,d\theta$ can be solved analytically (i.e. using pure Calculus). This is the entire premise behind the idea of *conjugacy*: we say $p(\theta)$ is a **conjugate prior** to the likelihood $p(X|\theta)$ if the posterior $p(\theta|X)$ is in the same distribution family as the prior $p(\theta)$. For example the **beta distribution** is a conjugate prior to the **binomial distribution**. Before computers were a thing, conjugacy was really the only way to calculate posteriors; this severely limited the usefulness of Bayesian statistics since only a very small set of problems could be solved using conjugate priors.
+
+2) **Grid Approximation**: The integral on the bottom is computed numerically by approximating $p(X|theta)p(\theta)$ with a Riemann sum. Specifically, we create a grid $[a_1,b_1]\times \ldots \times [a_k,b_k]\subset \mathbb{R}^k$ of possible parameter values $\theta = (\theta_1,\ldots,\theta_k)$ and compute a Riemann sum over this grid. In other words, we approximate $p(X | \theta)p(\theta)$ with a step function, in which case the integral just becomes a bunch of rectangles (which are easy to do). Where as analytical solutions don't require any computer power, grid approximation goes in the other extreme and brute forces the problem by using a computationally intensive algorithm. For example, let's say we have a Gaussian linear model with just 2 predictors; this model will have 4 parameter values $\beta_0,\beta_1,\beta_2,\sigma$. If we set up a grid of just 100 points for each parameter value, we would have a total of $100^4 = 100,000,000$ grid points to compute. Each point requires computing the prior $p(\theta)$ and the likelihood $p(X | \theta)$; if there are even just 50 observations $X = (x_1,\ldots,x_{50})$, then we would need to do a total of 5,000,000,000 computations. Things quickly get out of hand if we want to add more predictors or more data points. As such, grid approximation doesn't scale well to complex models (unless you are willing to throw massive compute and runtime at the problem).
+
+3) **Quadratic Approximation**: The posterior is approximated using a normal distribution. Since the normal distribution is completely determined by its mode $\mu$ and spread $\sigma$, we can just find a $\mu$ and $\sigma$ of "best fit". This circumvents having to compute the integral entirely, but does introduce a new problem of needing to solve for $\mu$ and $\sigma$. As it turns out, $\mu$ is just the posterior mode which we can compute using gradient ascent. $\sigma$ is just the spread which can be computed as the inverse of the curvature (2nd derivative). We can solve for both $\mu$ and $\sigma$ in one swoop by choosing a gradient ascent algorithm (such as BFGS) that approximates the Hessian (2nd derivative) and uses it to locate the mode. Quadratic approximation is usually motivated by the Bernstein-von Mises theorem which says that most "well-behaved" posteriors will converge to a normal distribution as long as we have enough data. However, this theorem does not guarantee a rate of convergence: the threshold for "having enough data" will change from problem to problem. As such there are times where the posterior is very non-normal and quadratic approximation will yield bad results.
+
+Noticed that in all 3 of the solutions there is a fundamental trade-off between 3 areas: scope, runtime, and accuracy. Analytic solutions require no runtime and have perfect accuracy, but analytic solutions are very limited in scope (they can only solve a very small subset of problems). Grid approximation can solve everything and is pretty accurate, but will require an insane amount of runtime. Quadratic approximation has good runtime, moderate scope, and moderate accuracy.
+
+**Markov chain monte carlo (MCMC)** is a 4th solution method that tries to navigate this trade-off:
+
+1) MCMC wants to have a better runtime than grid approximation, at a cost of slightly reduced scope and accuracy (there are times where MCMC won't converge to a solution, but this can usually be remedied by picking a more informative prior).
+
+2) MCMC wants to have better scope and accuracy than quadratic approximation, at the cost of a higher runtime.
+
+<br>
+
+---
+
+<br>
+
+# 4.2 The Motivating Example: A Discrete Distribution
+
+Suppose we wish to study the weather of the city of San Francisco. There are 4 possible outcomes on a any given day: sunny, cloudy, fog, rain. We are not given the exact probability distribution of these outcomes, but we do know the following relationships:
+
+1) Sunny days are 4 times more likely than rainy days.
+2) Cloudy days are 3 times more likely than rainy days.
+3) Foggy days are twice as likely as rainy days.
+
+How can we draw a sample of weathers given this information? Imagine a stretch of days where exactly 1 of these days was rainy. Based on the information given, we would expect: 4 days to be sunny, 3 days to be cloudy, and 2 days to be foggy in that same stretch of days. Let's define a function:
+
+$$
+f(x) = \begin{cases}
+1 & x = \text{rain} \\
+4 & x = \text{sunny} \\
+3 & x = \text{cloudy} \\
+2 & x = \text{fog}
+\end{cases}
+$$
+
+Note: we can get the actual probability distribution of weather by normalizing the $f(x)$ function
+
+$$
+p(x) = \frac{f(x)}{\sum_{x}f(x)} = \begin{cases}
+\frac{1}{11} & x = \text{rain} \\
+\frac{4}{11} & x = \text{sunny} \\
+\frac{3}{11} & x = \text{cloudy} \\
+\frac{2}{11} & x = \text{fog}
+\end{cases}
+$$
+However, the point of this section is to come up with a way to sample from $p(x)$ without actually having to compute the denominator (we will discuss why in a bit).
+
+Now to draw a sample, one approach is to do a random walk on a graph with 4 nodes: Sunny, Cloudy, Fog, and Rain. The walk happens in the following manner:
+
+0) Random select (with equal probability) one node $x_{current}$ to start at.
+1) Randomly select (with equal probability) any of the other nodes to potentially travel to; call this proposal node $x_{proposal}$.
+2) If $P(x_{current}) < P(x_{proposal})$ then immediately travel to node $x_{proposal}$. Otherwise, randomly draw a number $p$ from the interval $[0,1]$. If $p < \frac{P(x_{proposal})}{P(x_{current})}$ then travel to $x_{proposal}$; otherwise stay at $x_{current}$. For example if $x_{current} = \text{cloudy}$ and $x_{proposal} = \text{sunny}$, we immediately transition to $x_{proposal} = \text{sunny}$. If on the other hand $x_{proposal} = \text{fog}$, we transition with probability $p = \frac{P(\text{fog})}{P(\text{cloudy})} = \frac{2}{3}$. 
+3) Update $x_{current}$ to the current node we are on and add the node to the sample set.
+4) Loop back to step 1, unless we are satisfied with the size of the sample set.
+
+The idea is that this random walk will visit the nodes at the same frequencies as the proportions laid out by $f(x)$. We can simulate such a walk using a simple `for` loop:
+
+```{r}
+weathers <- c("rain", "sunny", "cloudy", "fog")
+
+f_weathers <- c(
+  "rain" = 1,
+  "sunny" = 4,
+  "cloudy" = 3,
+  "fog" = 2
+)
+
+sample_set <- c()
+
+set.seed(SEED)
+# step 0
+x_current = sample(weathers, size = 1, replace = TRUE)
+
+for (i in 1:1000){
+  # step 1
+  x_proposal = sample(weathers[weathers != x_current], size = 1, replace = TRUE)
+  
+  # step 2
+  if (f_weathers[x_proposal] > f_weathers[x_current]){
+    x_current = x_proposal
+  } else {
+    p = runif(1, min = 0, max = 1)
+    if (p < (f_weathers[x_proposal]/f_weathers[x_current])){
+      x_current = x_proposal
+    }
+  }
+  
+  #step 3
+  sample_set <- append(sample_set, x_current)
+}
+```
+
+Observe that the drawn sample actually reflects the relative likelihoods of each weather outcome:
+
+```{r}
+tibble(
+  days = 1:length(sample_set),
+  weather_sample = sample_set
+) %>% 
+  ggplot(aes(weather_sample)) + 
+  geom_bar()
+```
+
+From a sample of 1,000 days: sunny days occur about 400 times, cloudy days occur about 300 times, foggy days occur about 200 times, and rainy days occur about 100 times. This accurately reflects the relatively likelihoods given in the original problem statement (e.g. sunny days are 4 times as likely as rainy days).
+
+This algorithm is called the **Metropolis** algorithm and samples from the distribution of $p(x) = \frac{f(x)}{\sum_x f(x)}$ using only $f(x)$ and without computing $\sum_x f(x)$ directly. This is important because the normalizing constant $\sum_x f(x)$ turns into an integral $\int f(x) dx$ when $x$ is continuous. The Metropolis algorithm will allows us to draw samples from $p(x)$ without having to compute the nasty integral in the denominator!
+
+The Metropolis algorithm is an MCMC algorithm and all MCMC algorithms more or less follow the same idea: conduct a random walk through a space of values to sample those values. Each step of the random walk is controlled by some function $f(x)$ which might be very hard to integrate, but the key observation is that drawing samples only depends on the relative likelihoods of one outcome vs another!
+
+<br>
+
+---
+
+<br>
+
+# 4.3 MCMC For Continuous Values
+
+## Metropolis-Hastings
+
+To extend the Metropolis algorithm (aka Metropolis-Hastings algorithm) to continuous variables, suppose we had a function $f(x)$ and we wish to sample from the distribution:
+
+$$
+p(x) = \frac{f(x)}{\int f(x) dx}
+$$
+
+Generally speaking, the integral is incredibly hard to compute, so we wish to avoid having to deal with $\int f(x) dx$ directly. One possibility for generating a sample is to extend the Metropolis algorithm to the continuous case:
+
+0) (Initialization) Randomly select a starting point $x_{current}$. Choose a any probability distribution $g(x_{proposal}|x_{current})$; this distribution is used to propose the next travel node. Often times, the distribution $g(x_{proposal}|x_{current})$ is chosen to be Gaussian, so that nearby points are more likely to be visited next (which makes it a random walk).
+
+1) Randomly generate a proposal destination $x_{proposal}$ by sampling a single value from $g(x_{proposal}|x_{current})$.
+2) If $f(x_{current}) < f(x_{proposal})$, immediately travel to $x_{proposal}$. Otherwise, generate a random number $p$ from $[0,1]$. If $p < \frac{f(x_{proposal})}{\frac{x_{current}}}$, travel to $x_{proposal}$; otherwise stay at $x_{current}$.
+3) Set $x_{current}$ to the current node we are on and append the $x_{current}$ to the sample set.
+4) Repeat steps 1, 2, and 3 until we are satisfied with the sample size
+
+As an example, suppose that our set of outcomes is the entire interval $[1, \infty)$. The function which describes the relative likelihood of each $x$ value is:
+
+$$
+f(x) = \frac{1}{x^2 + 1}
+$$
+
+```{r}
+# graph of f(x) = 1/(x^2 + 1)
+tibble(
+  x = seq(1:50),
+  y = 1/(x^2 + 1)
+) %>% 
+  ggplot(aes(x = x, y = y)) + 
+  geom_line()
+```
+
+We wish to sample from the distribution
+
+$$
+p(x) = \frac{\frac{1}{x^2 + 1}}{\int_1^{\infty}\frac{1}{x^2 + 1} dx}
+$$
+
+However, the denominator $\int_{1}^{\infty}\frac{1}{x^2 + 1}dx$ is a non-elementary integral: there isn't an easy way to solve it using pure calculus. We can instead attempt to sample from $p(x)$ using the metropolis algorithm. We'll start at the point $x = 1$ and use the Gaussian distribution for the proposal generator. Note that the Gaussian distribution can return negative $x$-values, but according to our definition of $f(x)$, we only are permitting values $x \geq 1$.
+
+```{r}
+# define the function f(x)
+f_x <- function(x){
+  if (x < 1){
+    return(0)
+  } else {
+    return(1/(x^2 + 1))
+  }
+}
+
+# step 0
+x_current <- 1
+
+sample_set <- c()
+
+set.seed(SEED)
+for (i in 1:1000){
+  x_proposal <- rnorm(1, mean = x_current, sd = 1)
+  p <- runif(1, min = 0, max = 1)
+  
+  if (x_proposal < 1){
+    # do nothing
+  } else if (f_x(x_current) <= f_x(x_proposal)){
+    x_current = x_proposal
+  } else if (p < f_x(x_proposal)/f_x(x_current)){
+    x_current = x_proposal
+  }
+  
+  sample_set <- append(sample_set, x_current)
+}
+
+```
+
+We can visualize the random walk with a so-called "caterpillar" plot:
+
+```{r}
+tibble(
+  iteration = 1:length(sample_set),
+  sampled_x = sample_set
+) %>% 
+  ggplot(aes(x = iteration, y = sampled_x)) + 
+  geom_line()
+```
+
+We can visualize the resulting sample using a histogram:
+
+```{r}
+tibble(
+  iteration = 1:length(sample_set),
+  sampled_x = sample_set
+) %>% 
+  ggplot(aes(x = sampled_x)) + 
+  geom_histogram(breaks = seq(1, 12, by = 0.5))
+```
+
+Note that in the continuous case, the selection of the proposal point is determined by the proposal distribution $g(x_{proposal}|x_{current})$, this means that the point we visit next is *not independent* from the point we are currently on, which has the following consequences:
+
+1) The choice of starting point now matters. If we were to start in a region that has low density, the first few steps of the random walk will be concentrated in that region. This means that the *beginning* of the walk won't see any of the high frequency points, and won't be a representative sample. The solution is to have a **burn-in** period, where we let the algorithm wander around for a bit so it gets a chance to make its way to the high density regions. We ignore all the samples from the burn-in period and only keep the samples after the burn-in period.
+
+2) The sampled values are not independent, but will be serially correlated: if $x_t$ is a small value, than $x_{t+1}$ is likely to be a small value as well, since $x_{t+1}$ is likely to be close to $x_t$. Because the samples are (locally) correlated, the "effective sample" size is actually smaller than the raw sample size. In other words, we can only treat samples as independent if they are many iterations apart (e.g. 50 iterations), so the actual size of the "independent sample" is much smaller than the raw number of samples the chain generates.
+
+To demonstrate the need for a burn-in period, consider the following random walk which starts in a very low density area:
+
+```{r}
+# define the function f(x)
+f_x <- function(x){
+  if (x < 1){
+    return(0)
+  } else {
+    return(1/(x^2 + 1))
+  }
+}
+
+# step 0
+x_current <- 50
+
+sample_set <- c()
+
+set.seed(SEED)
+for (i in 1:1000){
+  x_proposal <- rnorm(1, mean = x_current, sd = 1)
+  p <- runif(1, min = 0, max = 1)
+  
+  if (x_proposal < 1){
+    # do nothing
+  } else if (f_x(x_current) <= f_x(x_proposal)){
+    x_current = x_proposal
+  } else if (p < f_x(x_proposal)/f_x(x_current)){
+    x_current = x_proposal
+  }
+  
+  sample_set <- append(sample_set, x_current)
+}
+```
+
+```{r}
+tibble(
+  iteration = 1:length(sample_set),
+  sampled_x = sample_set
+) %>% 
+  ggplot(aes(x = iteration, y = sampled_x)) + 
+  geom_line()
+```
+
+Notice that it takes the chain about 600 iterations before it's able to find its way to the high density region. All of the low-density points $10 \leq x \leq 70$ make up more than 50% of the sample and are over-represented:
+
+```{r}
+tibble(
+  iteration = 1:length(sample_set),
+  sampled_x = sample_set
+) %>% 
+  ggplot(aes(x = sampled_x)) + 
+  geom_histogram(breaks = seq(1, 75, by = 1))
+```
+
+The sample has a right-skew, which occurred because our starting point was 50. This caused the first 600 or so iterations to wander in the low-density region before making it to the "correct" $x$ values. If we throw out the first 600 iterations, the resulting histogram looks much closer to the actual shape of the posterior:
+
+```{r}
+tibble(
+  iteration = length(sample_set),
+  sampled_x = sample_set
+) %>% 
+  mutate(
+    sample_num = row_number()
+  ) %>% 
+  filter(
+    sample_num > 600
+  ) %>% 
+  ggplot(aes(x = sampled_x)) + 
+  geom_histogram(breaks = seq(1, 10, by = 0.2))
+```
+
+This is the reason MCMC chains require a burn-in period: the chain needs some time to feel out the space and navigate to the high density region.
+
+
+<br>
+
+## Other MCMC Algorithms
+
+"Markov chain monte carlo" (MCMC) is the name for a family of algorithms which leverages the idea of a random walk through the space as a means to draw a sample. The Metropolis algorithm is one such algorithm, but there are others as well. Generally, different algorithms propose different ways to conduct the random walk. Some examples of other MCMC algorithms:
+
+1) **Gibbs Sampling**: suppose we wish to sample points in a high-dimensional space $X = (X_1,\ldots,X_n)$. Gibbs sampling does this by drawing a value for $X_i$ from the conditional distribution $p(X_i|(X_j)_{j\neq i}$. It repeats this for each component $X_1,\ldots,X_n$ to obtain sampled point $(X_1,\ldots,X_n)$. More spefically, $X_1$ is sampled first, and the new sampled value for $X_1$ is used in the conditional distribution $X_2|X_1,\ldots,X_n$, and so on. Obviously, Gibbs sampling requires knowing the conditional distribution $p(X_i|(X_i){i\neq j})$, but its usually the case that conditional distributions are much easier to compute than joint distributions.
+
+2) **Hamiltonian Monte Carlo**: Hamiltonian Monte Carlo conducts the random walk by running a physics simulation of a marble rolling around a bowl. The idea is to treat the un-normalized density function $f(x)$ as an $n$-dimensional surface. We invert the surface so that the valleys correspond to the high density areas. A path is traced using velocity and momentum at each point of the bowl. The idea is that the path will naturally be sucked into the valleys while occasionally climbing out of the valley and into the surrounding areas. Valleys (which correspond to the high density regions) will be visited more, while points at the top of steep cliffs (which correspond to lower density regions) will be visited less.
+
+<br>
+
+---
+
+<br>
+
+# 4.4 Hamiltonian Monte Carlo via `brms`
+
+The `brms` package fits bayesian models using Hamiltonian Monte Carlo via the `set_prior()` and the `brm()` function. Priors are specified as a *vector* of `set_prior()` outputs:
+
+```{r}
+library(brms)
+
+# example of how to setup priors for brms
+model_priors <- c(
+  set_prior("normal(0,2)", class = "b", coef = "Marriage"),
+  set_prior("normal(0,100)", class = "b", coef = "MedianAgeMarriage"),
+  set_prior("normal(10,100)", class = "b", coef = "Intercept")
+)
+
+# example of how to fit a model, once priors are set
+model <- brm(
+  Divorce ~ 0 + Intercept + Marriage + MedianAgeMarriage,
+  data = df_divorce,
+  warmup = 300,
+  iter = 700,
+  chains = 2,
+  prior = model_priors,
+  cores = 2,
+  seed = SEED
+)
+```
+
+```{r}
+summary(model)
+```
+
+We can extract the actual chains in a longform tibble using the `ggs()` function from the `ggmcmc` package:
+
+```{r}
+ggmcmc::ggs(model) %>% 
+  filter(Parameter %in% c("b_Intercept", "b_Marriage", "b_MedianAgeMarriage", "sigma")) %>% 
+  ggplot(aes(x = Iteration, y = value, col = as.factor(Chain))) + 
+  geom_line() + 
+  geom_vline(xintercept = 100) + # mark the burn-in period
+  facet_grid(Parameter ~ ., scale = "free_y", switch = "y") + 
+  labs(title = "Caterpillar Plots", col = "Chains")
+```
+
+```{r}
+plot(model)
+```
+
+
+

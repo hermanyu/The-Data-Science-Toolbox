@@ -1,0 +1,428 @@
+
+# 002 Synethetic Data
+
+<br>
+
+---
+
+<br>
+
+## Setup
+
+```{r, echo = FALSE}
+library(ggplot2)
+library(dplyr)
+```
+
+<br>
+
+
+## Introduction
+
+To do data science, you need to have data. In order to obtain data, we usually need to either:
+
+1) Gather it ourselves
+2) Hunt down a pre-compiled public data set
+
+Both options can be time consuming and quite restrictive, especially for experimenting with data science tools and techniques. A better approach is to create our own "toy" data sets by generating **synthetic data**, i.e. generating numbers from a computer algorithm. Typically the workflow will go like this:
+
+1) We have one or more random variables $X_1, X_2,\ldots, X_n$ we wish to simulate.
+2) We generate a sample of values for $X_1,\ldots,X_n$ by sampling from their joint distribution $X_1,\ldots,X_n$
+
+Often times, sampling from the joint distribution is incredibly hard (maybe even straight-up impossible), so we will use assumptions to sample from smaller, easier distributions instead. The two most prominent examples are:
+
+a) If $X$ and $Y$ are independent, then we can sample from the joint distribution by sampling from $X$ and then sampling from $Y$ independently. This is called **sampling from the marginal distributions**.
+
+b) If $X$ and $Y$ are related and we know this relationship, say $\mu(Y) = f(X)$, then we can sample $X$ first. Then for each fixed value of $X = x$, we sample from the distribution of $Y$ determined from $X = x$. This is called **sampling from the conditional distribution**.
+
+<br>
+
+---
+
+<br>
+
+# 2.1 Sampling From A Single Distribution
+
+## Sampling From The Uniform Distribution
+
+The easiest distribution to sample from is the uniform distribution. We won't worry about the backend algorithms for how to generate numbers uniformly. For now, just assume that an algorithm exists to generate values with uniform probability.
+
+To call upon this black-box algorithm in R, we can use the `runif()` function ("R"andom "Unif"orm)
+
+```{r}
+sample_size = 20
+lower_bound = 0
+upper_bound = 1
+
+runif(n = sample_size, min = lower_bound, max = upper_bound)
+```
+
+<br>
+
+## Inverse Transform Sampling
+
+Suppose we have a random variable $X$ and we wish to simulate this random variable to get a sample of size $N$. How can this be accomplished? One possibility is **inverse transform sampling** algorithm which leverages the randomness from the uniform distribution to simulate the randomness of any other random variable $X$.
+
+To simulate 1 value of $X$, do the following:
+
+1) Random sample a number $u$ from the uniform distribution $[0,1]$.
+
+2) Find the smallest number $x$ such that $Pr(X>=x) = u$, i.e. the point $X = x$ for which the right-tail of $X$'s distribution is equal to $\mu$. That is, find the value $x$ for which $x$ is the $u$-th quantile of the distribution. This is called *inverting the CDF* and is where the name of the algorithm comes from.
+
+3) The found number $x$ is the simulated value of $X$.
+
+```{r}
+# example: sampling 1,000 values from the normal distribution N(0,1)
+# using inverse transform sampling
+
+sample_size = 1000
+set.seed(42)
+
+# step 1: randomly sample 100 numbers from a uniform distribution on [0,1]
+vector_u = runif(n = sample_size, 0, 1)
+
+# step 2: for each sampled value u, find the x for which is the u-th quantile
+vector_x = qnorm(vector_u, mean = 0, sd = 1)
+
+# plot the results of the sample as a histogram
+# overlayed with the actual normal distribution
+tibble(
+    x = vector_x
+  ) %>% 
+  ggplot(aes(x = x)) + 
+    stat_function(fun = dnorm) + 
+    geom_histogram(aes(y = after_stat(density)), alpha = 0.6)
+```
+
+Key takeway: inverse transform sampling can be used to sample from any probability distribution by inverting the CDF. However, the caveat is that inverting the CDF can be computationally expensive.
+
+<br>
+
+## Sampling With R
+
+R has pre-built functions for sampling from well-known distributions. Working with distributions generally involve using a set of 4 functions:
+
+* The "r" functions which sample from the distribution. E.g `rnorm()` samples from the normal distribution
+* The "d" functions which return the density of value of $X = x$. E.g. `dnorm()` returns the PDF of the normal distribution.
+* The "p" functions which return the cumultative probability of $X \leq x$. E.g. `pnorm()` returns the CDF of the normal distribution.
+* The "q" functions which return the value of corresponding to a given quantile. E.g. `qnorm()` returns the quantiles of the normal distribution
+
+If we wish to sample from a well-known distribution, we can leverage the "r" functions.
+
+```{r}
+sample_size = 30
+set.seed(42)
+
+# sample from the uniform distribution on [0,1]
+vector_sample = runif(n = sample_size, min = 0, max = 1)
+print("Uniform sample:")
+print(vector_sample)
+print("")
+print("--------------------")
+print("")
+
+# sample from the standard normal distribuiton N(0,1)
+vector_sample = rnorm(n = sample_size, mean = 0, sd = 1)
+print("Normal sample:")
+print(vector_sample)
+print("")
+print("--------------------")
+print("")
+
+# sample from the binomial distribution with p = 0.4 and 10 trials
+vector_sample = rbinom(n = sample_size, size = 10, p = 0.4)
+print("Binomial sample:")
+print(vector_sample)
+print("")
+print("--------------------")
+print("")
+
+# sample from the bernoulli distribution with p = 0.4
+vector_sample = rbinom(n = sample_size, size = 1, p = 0.4)
+print("Bernoulli sample:")
+print(vector_sample)
+print("")
+print("--------------------")
+print("")
+
+# sample from the Poisson distribution with lambda = 5
+vector_sample = rpois(n = sample_size, lambda = 5)
+print("Poisson sample:")
+print(vector_sample)
+print("")
+print("--------------------")
+print("")
+
+# sample from the Geometric distribution with rate = 0.5
+vector_sample = rgeom(n = sample_size, prob = 0.5)
+print("Geometric sample:")
+print(vector_sample)
+print("")
+print("--------------------")
+print("")
+
+# sample from the exponential distribution with rate = 0.5
+vector_sample = rexp(n = sample_size, rate = 0.5)
+print("Exponential sample:")
+print(vector_sample)
+print("")
+print("--------------------")
+print("")
+
+# sample from the t-distribution with 20 degrees of freedom
+vector_sample = rt(n = sample_size, df = 20)
+print("Student's t sample:")
+print(vector_sample)
+print("")
+print("--------------------")
+print("")
+
+# sample from the Chi-squared distribution with 20 degrees of freedom
+vector_sample = rchisq(n = sample_size, df = 20)
+print("Chi-squared sample:")
+print(vector_sample)
+print("")
+print("--------------------")
+print("")
+
+# sample from the F-distribution with df1 = 20, df2 = 25
+vector_sample = rf(n = sample_size, df1 = 20, df2 = 25)
+print("F sample:")
+print(vector_sample)
+print("")
+print("--------------------")
+print("")
+
+# sample from a beta distribution with alpha = 5 and beta = 8
+vector_sample = rbeta(n = sample_size, shape1 = 5, shape2 = 8)
+print("Beta(5,8) sample:")
+print(vector_sample)
+print("")
+print("--------------------")
+
+```
+
+<br>
+
+## Sampling Custom Finite Distribution
+
+It is also possible to simulate draws from a finite list of objects according to some custom probability distribution. This is achieved using the `sample()` function
+
+```{r}
+sample_size = 30
+
+# list of values to sample:
+vector_values <- c(
+  2, 3, 5, 7, 11, 
+  13, 17, 19, 23, 29,
+  31, 37, 41, 47, 53,
+  59, 61, 67, 71, 73
+)
+
+# probability distribution for the values
+# note we can pass un-normalized list; the sample()
+# function automatically rescales according to vector <- vector/sum(vector)
+vector_probs <- c(
+  1, 1, 3, 2, 1,
+  0.5, 0.5, 2, 2, 3,
+  1, 2, 1, 1, 1,
+  3, 2, 0.5, 0.5, 1
+)
+
+# sample (with replacement) from values in vector_values
+# according to the proportions defined in vector_probs
+vector_sample = sample(
+  x = vector_values,
+  size = sample_size,
+  replace = TRUE,
+  prob = vector_probs
+)
+
+print(vector_sample)
+```
+
+<br>
+
+---
+
+<br>
+
+# 2.2 Sampling From Multivariate Distributions
+
+Suppose we have a set of random variables $X_1, X_2,\ldots, X_n$. A single data point is now represented as a vector of values $(X_1 = x_1, X_2 = x_2, \ldots, X_n = x_n)$ of length $n$. Note that now, a sample is a list of vectors. Simulating a single point for $X_1,\ldots,X_n$ means simulating values $X_1 = x_1,\ldots, X_n = x_n$ simultaneously. This is done by sampling from the joint probability distribution:
+
+$$
+X_1,\ldots,X_n \sim f(x_1,\ldots,x_n)
+$$
+
+Generally speaking, the join probability distribution is incredibly complicated, even when we know the individual distributions of each $X_i$; consequently, sampling from the joint distribution is very difficult to do. However, there are 2 special cases where sampling from the joint distribution can be easily done by sampling from smaller, simpler distributions.
+
+<br>
+
+## Independent Variables And Marginal Distributions
+
+If $X_1, X_2,\ldots,X_n$ are independent, then the joint distribution of $X_1,\ldots,X_n$ is just the product of the individual distributions:
+
+
+$$
+X_1,\ldots,X_n \sim f(x_1,\ldots,x_n) = f_{X_1}(x) \cdot \ldots \cdot f_{X_n}(x)
+$$
+
+The individual distributions $f_{X_1}(x)$ are called the **marginal distributions**.
+
+```{r}
+# Example: Sampling from two independent normal variables
+sample_size = 30
+set.seed(42)
+
+# Suppose we have 2 random variables: X ~ N(30, 5) and Y ~ N(12, 2)
+# Then to sample from the joint distribution, we just sample X and Y individually
+
+# Sample from the marginal distribution of X
+vector_X = rnorm(n = sample_size, mean = 30, sd = 5)
+
+# Sample from the marginal distribution of Y
+vector_Y = rnorm(n = sample_size, mean = 12, sd = 2)
+
+# obtain the sample for the joint distribution by pairing the X's and Y's together
+mat_XY = matrix(nrow = sample_size, ncol = 2)
+colnames(mat_XY) <- c("X", "Y")
+
+for (i in 1:sample_size){
+  mat_XY[i,] <- c(vector_X[i], vector_Y[i])
+}
+
+print(mat_XY)
+```
+
+```{r}
+# plot the simulated points from the joint distribution of X and Y
+# The red and blue points are the projections of the data points to the X and Y axis
+# which are the samples from the marginal distribution
+mat_XY %>% 
+  as_tibble() %>% 
+  ggplot() + 
+  ylim(0, 20) + 
+  xlim(0, 50) + 
+  geom_point(aes(x = X, y = Y)) + 
+  geom_point(aes(x = X), y = 0, color = "red") + 
+  geom_point(aes(y = Y), x = 0, color = "blue") + 
+  geom_hline(aes(yintercept = Y), color = "blue", linetype = "dashed", alpha = 0.2) + 
+  geom_vline(aes(xintercept = X), color = "red", linetype = "dashed", alpha = 0.2)
+```
+
+Note: the assumption of independence is critical to the validity of this sampling procedure. Whenever we sample the marginal distributions separately, the resulting sample will have an expected correlation of 0. Sample correlation is a sample statistic; it fluctuates every time we draw a new sample, but on average the correlation will average out to 0 from repeated sampling.
+
+```{r}
+num_samples_to_draw = 20
+
+vector_correlations = c()
+
+set.seed(42)
+
+for (i in 1:num_samples_to_draw){
+  vector_X = rnorm(n = sample_size, mean = 30, sd = 5)
+  vector_Y = rnorm(n = sample_size, mean = 12, sd = 2)
+  vector_correlations <- append(vector_correlations, cor(vector_X, vector_Y))
+}
+
+print(vector_correlations)
+print(paste0("Mean Correlation Across Samples: ", mean(vector_correlations)))
+```
+
+<br>
+
+## Sampling from Conditional Distributions
+
+Suppose we have random variables $Y, X_1, X_2, \ldots, X_n$. We wish to sample from the joint distribution $(Y,X_1,\ldots,X_n)$ but this generally very hard to do directly. An alternative approach is to think about the conditional distribution of $Y$ at different levels of $X_1,\ldots,X_n$:
+
+$$
+Y|X_1,\ldots,X_n \sim f_{\theta(X_1,\ldots,X_n)}(y)
+$$
+
+The notation here indicates that the conditional distribution $Y|X_1,\ldots,X_n$ is some density function $f(y)$ that is controlled by a parameter $\theta$ which is a function of the $X_1,\ldots,X_n$.
+
+For example, suppose we have 3 random variables $Y,X_1,X_2$. We might have something like:
+
+$$
+Y|X_1,X_2 \sim N(0.5X_1 + X_2^2, 1)
+$$
+i.e. $Y$ is normally distributed around some mean $\mu = 0.5X_1 + X_2^2$ with standard deviation 1. As $X_1$ and $X_2$ change, the mean value of $Y$ will change as well, which is how $Y$ is related to $X_1$ and $X_2$.
+
+Generally speaking, if the we know the joint distribution of $(X_1,\ldots,X_n)$ and we know the conditional distribution $Y|X_1,\ldots,X_n$, then it becomes easy to sample from the joint distribution $(Y, X_1,\ldots,X_n)$:
+
+1) Sample vectors $(x_1,\ldots,x_n)$ from the joint distribution of $(X_1,\ldots, X_n)$.
+2) For each vector $(x_1,\ldots,x_n)$, sample a $Y$-value from the conditional distribution $Y|X_1 = x_1,\ldots, X_n = x_n$.
+3) Concatenate the sampled $Y$-value with their corresponding vector to obtain a new vector $(y, x_1,\ldots,x_n)$. The collection of all such vectors is a sample from the joint distribution $(Y,X_1,\ldots,X_n)$.
+
+
+```{r}
+# Example 1: sampling from a simple linear relationship
+set.seed(42)
+X <- rnorm(n = 100, mean = 50, sd = 10)  # generate a sample of X values
+Y <- rnorm(X, mean = 1.5*X + 20, sd = 7) # sample Y, conditional on X value
+
+# plot to see the synthetic data
+tibble(
+  X = X,
+  Y = Y
+) %>% 
+  ggplot(aes(x = X, y = Y)) + 
+  geom_point() + 
+  xlim(0, 100) + 
+  ylim(0, 200) + 
+  geom_abline(slope = 1.5, intercept = 20, linetype = "dashed", alpha = 0.5)
+```
+
+```{r}
+# Example 2: Multivariate linear relationship between Y, X1, X2.
+# We assume X1 and X2 are independent, so that the joint distribution
+# can be sampled by sampling the individual marginal distributions.
+set.seed(42)
+X1 <- rnorm(n = 100, mean = 50, sd = 10)
+X2 <- rnorm(n = 100, mean = 35, sd = 5)
+Y <- rnorm(X1, mean = 1.5*X1 + 3*X2 + 15, sd = 7)
+
+tibble(
+  X1 = X1,
+  X2 = X2,
+  Y = Y
+) %>% 
+  ggplot(aes(x = X1, y = X2, color = Y)) + 
+  geom_point() + 
+  xlim(0, 100) + 
+  ylim(0, 100) + 
+  scale_color_viridis_c(option = "magma") + 
+  # level curves to trace out the hyperplane
+  geom_abline(slope = -0.5, intercept = 42, linetype = "dashed", alpha = 0.5) + 
+  geom_abline(slope = -0.5, intercept = 52, linetype = "dashed", alpha = 0.5) + 
+  geom_abline(slope = -0.5, intercept = 62, linetype = "dashed", alpha = 0.5) + 
+  geom_abline(slope = -0.5, intercept = 72, linetype = "dashed", alpha = 0.5)
+```
+
+```{r}
+# Example 3: multi-level relationship where Y depends on X_2,
+# but X_2 itself depends on X_1
+X1 = rnorm(100, mean = 50, sd = 10)
+X2 = rnorm(X1, mean = 0.5*X1 + 10, sd = 8)
+Y = rnorm(X2, mean = 20 + 2*X2, sd = 10)
+
+tibble(
+  X1 = X1,
+  X2 = X2,
+  Y = Y
+) %>% 
+  ggplot(aes(x = X1, y = X2, color = Y)) + 
+  geom_point() + 
+  xlim(0, 100) + 
+  ylim(0, 100) + 
+  scale_color_viridis_c(option = "magma") + 
+  # X2 = 0.5X1 + 10 and also level curves for Y
+  geom_abline(slope = 0.5, intercept = 10, alpha = 0.6) + 
+  geom_hline(yintercept = 20, linetype = "dashed", alpha = 0.5) + 
+  geom_hline(yintercept = 30, linetype = "dashed", alpha = 0.5) + 
+  geom_hline(yintercept = 40, linetype = "dashed", alpha = 0.5) + 
+  geom_hline(yintercept = 50, linetype = "dashed", alpha = 0.5)
+```
+
+
