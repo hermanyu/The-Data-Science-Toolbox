@@ -1,0 +1,661 @@
+
+```{r}
+options(scipen = 999)
+seed_value = 123
+
+library(dplyr)
+library(ggplot2)
+```
+
+# 01 Bayesian Foundations
+
+<br>
+
+---
+
+<br>
+
+# Introduction
+
+Bayesian statistics is primarily interested in how to deal with uncertainty. In the traditional frequentist perspective, "uncertainty" is not the same as randomness: just because we don't know something, doesn't mean it is random. For example, up until 1897, physicists were uncertain as to whether electrons actually existed. However, it would be absurd to say that the existence of electrons in our universe is random; electrons did not magically pop into existence in 1897.
+
+However, there are times where it feels natural to *model* uncertainty as randomness. This is where Bayesian statistics comes in: the central principal of Bayesian statistics to place a probability distribution around every quantity for which there is uncertainty. From this perspective, "probability" is no longer how likely an outcome is to occur. Instead, "probability" becomes a measure for how likely we think something is to be true.
+
+<br>
+
+---
+
+<br>
+
+# 1.1 The Data Generation Process
+
+The Bayesian perspective models all data generation processes as being composed of the same two layers:
+
+1) There are parameters $\theta_1,\ldots, \theta_k$ with some joint distribution $\theta_1,\ldots,\theta_k \sim p(\theta_1,\ldots,\theta_k)$. This is called the **prior distribution** and represents an initial belief about what the parameters are likely to be.
+
+2) There are random variables which can be observed together: $X_1,\ldots,X_m$. Their joint distribution is dependent on the parameters values $X_1,\ldots,X_m | \theta_1,\ldots,\theta_k \sim f(X_1,\ldots,X_m | \theta_1,\ldots,\theta_k)$. This is called the **likelihood function** and represents how different values of the $\theta$ generate different values of the $X$.
+
+These layers can be stacked: for example we can have hyperparameters $\tau$ with hyperpriors $p(\tau)$, which generate parameters $\theta$ according to priors $p(\theta|\tau)$, which then generate the observed variable $X$ according to the likelihood $p(X|\theta)$.
+
+<br>
+
+---
+
+<br>
+
+# 1.2 Bayesian Updating
+
+Up to this point, there is nothing inherently statistical about these ideas. The statistics comes in when we go out and actually observe some data: $(X_1 = x_1,\ldots, X_m = x_m)$. By observing data, we obtain *new information* about the world. The central question becomes: how do we use this new information?
+
+Bayesian statistics answers this question via Bayes formula:
+
+$$
+p(\theta|X) = \frac{ p(\theta) \cdot p(X|\theta)}{\int p(X | \theta) d\theta}
+$$
+
+The formula states that we can get a *new distribution* $p(\theta|X)$ for $\theta$ using the observed data $X$. Remember, in the Bayesian paradigm, probability distributions represent uncertainty (not randomness). The idea is that our the uncertainty of $\theta$ will *change* once we get new information about the world.
+
+The new, updated distribution $p(\theta|X)$ is called the **posterior distribution**. Bayes formula states that:
+
+$$
+\text{posterior} \propto \text{prior} \cdot \text{likelihood}
+$$
+where the $\propto$ symbol means "is proportional to". The formula just states that the "posterior" distribution is equal to "prior" x "likelihood", up to some normalizing constant.
+
+This process of obtaining a posterior distribution $p(\theta|X)$ using Bayes formula is called **Bayesian updating**. While the formula *looks* simple, using it for actual computations is extremely difficult. In fact, most posterior distributions won't have an analytically closed form solution (i.e. a formula). The main difficulty lies in the normalizing constant: most integrals are not elementary and won't have a closed form solution.
+
+Since it is often impossible to get an exact solution for $p(\theta|X)$, the next best alternative is to try to get an approximate solution instead. This can be done using numerical approximation methods to estimate $p(\theta|X)$ instead. Here are 3 well-known approaches:
+
+1) Grid Approximation: instead of considering every possible value of the parameter $\theta$, limit ourselves to a finite grid of values for $\theta$. Then approximate the posterior $p(\theta|X)$ as a step function over this finite grid. Integrals of step functions are easy to compute (it's just base x height).
+
+2) Quadratic Approximation (aka Gaussian Approximation, aka Maximum A Posteriori): declare that $p(\theta|X)$ is close to a normal distribution (in which case the log posterior $\log p(\theta|X)$ will be a quadratic function). Since a normal distribution is controlled by two parameters $\mu$ and $\sigma^2$, we can approximate $p(\theta|X)$ by finding good candidates for $\mu$ and $\sigma^2$. The parameter $\mu$ is the mean, but for a normal distribution $\mu$ is also the mode (maximum); hence we need to estimate the maximum value of the posterior distribution $p(\theta|X)$ first (hence the name "Maximum A Posteriori").
+
+3) Markov Chain Monte Carlo: setup a Markov Chain where each state is a value of the parameter $\theta$ and traverse the chain according to the values of $p(\theta) \cdot p(X|\theta)$ (the numerator in Bayes formula). Values of $\theta$ which have higher $p(\theta) \cdot p(X\theta)$ will be visited more, while $\theta$ with lower values of $p(\theta)\cdot p(X\theta)$ will be visited less. This will generate a sample of $\theta$ values, which occur in proportion to their $p(\theta)\cdot p(X\theta)$. In other words, we generate a direct sample of the posterior distribution (without actually needing to know what it is exactly).
+
+<br>
+
+---
+
+<br>
+
+# 1.3 Example: Distribution of Adult Weight
+
+Suppose we are studying the weight of adults from the United States. Let $X$ denote the weight (in pounds) of a randomly selected US adult. To make things concrete, let's pretend that the true distribution of US adult weights $X$ follows a normal distribution $N(\mu,\sigma)$ and is controlled by some unknown parameters $\mu$ and $\sigma$:
+
+```{r}
+# Establish parameters mu and sigma, which is hidden from us
+set.seed(seed_value)
+
+true_mu <- runif(1, 160, 180)
+true_sigma <- runif(1, 30, 40)
+```
+
+This "true" parameter values are hidden to us; we don't know what they are and would like to be able to reconstruct them above using some kind of statistical analysis.
+
+<br>
+
+## Establishing A Prior
+
+Let's pretend that we do some literature review and found a previous study that estimated the mean adult weight *for the entire world*. This study estimates that $\mu \approx 140$ and we can use this as our initial guess as to what the mean US adult weight would be:
+
+$$
+\begin{align*}
+\mu &\sim N(140, 50) \\
+p(\mu) &= \text{dnorm}_{140, 50}(\mu) & (\text{prior for } \mu)
+\end{align*}
+$$
+
+```{r}
+# graphical representation of our prior
+tibble(
+  x = seq(0,300),
+  density = dnorm(x, mean = 140, sd = 50)
+) %>% 
+  ggplot(aes(x = x, y = density)) + 
+  geom_line() + 
+  geom_vline(xintercept = 140, linetype = "dashed", alpha = 0.5) + 
+  labs(title = "Prior Distribution for Mu")
+```
+
+Each $x$-value is a possible value of $\mu$, the mean adult weight in the US). The density represents how plausible we think each $x$-value is at being the mean adult weight in the US. The our belief is strongest at $x = 140$ and decays as we move further away. Notice that the distribution is fairly wide: there are non-trivial probabilities even at $x \geq 200$ and $x\leq 75$. The "wideness" of the distribution reflects the amount of uncertainty in our initial belief for $\mu$.
+
+We also need to do the same thing for the standard deviation parameter $\sigma$. The only reasonable belief we can place on $\sigma$ is that it is likely between 0 and 100, but we have no good reason to say anything more. So we can place a uniform distribution on $\sigma$ as our prior:
+
+$$
+\begin{align*}
+\sigma &\sim \text{Unif}(0, 100) \\
+p(\sigma) &= \text{dunif}_{0, 100}(\sigma) & (\text{prior for } \sigma)
+\end{align*}
+$$
+
+```{r}
+# graphical representation of our prior
+tibble(
+  x = seq(-10,110),
+  density = dunif(x, min = 0, max = 100)
+) %>% 
+  ggplot(aes(x = x, y = density)) + 
+  geom_line() + 
+  labs(title = "Prior Distribution for Sigma")
+```
+
+
+<br>
+
+## Establishing the Likelihood
+
+Next, we need to describe how the observed random variable $X$ (adult weights in the US) are generated from the parameter values of $\mu$ and $\sigma$. Recall that we believe US adult weights $X$ should follow a normal distribution that's controlled by $\mu$ and $\sigma$:
+
+$$
+X | \mu,\sigma \sim N(\mu,\sigma) \\
+p(X = x | \mu,\sigma) = \text{dnorm}_{\mu,\sigma}(x)
+$$
+
+This establishes the likelihood function:
+
+<br>
+
+## Observing The Data
+
+Now, we want to use data to supplement our understanding of $X$, the weight of a randomly selected US adult. So we go out and gather observations for $X$ (i.e. we generate a sample from the true distribution of $X$)
+
+```{r}
+sample_size = 5
+
+set.seed(seed_value)
+
+X_data = rnorm(sample_size, mean = true_mu, sd = true_sigma)
+
+print(X_data)
+print(mean(X_data))
+```
+
+The observed sample data has a mean of about 195 pounds. This is larger than our initial belief for $\mu$ being near 140, so we want to incorporate this data to increase our estimate of $\mu$. This can be done via Bayesian updating.
+
+<br>
+
+## Bayesian Updating
+
+Finally, we want to incorporate the observed data to update our beliefs about the parameters $\mu$ and $\sigma$. We will approximate the posterior distribution of $\mu$ and $\sigma$ using grid approximation.
+
+### Grid Approximation
+
+```{r}
+# construct a grid of possible values for mu and sigma
+mu_grid = seq(50, 250, by = 2)
+sigma_grid = seq(0, 100, by = 1)
+```
+
+We approximate $p(\mu,\sigma|X)$ as a step function over `parameter_grid`:
+
+$$
+\begin{align*}
+p(\mu,\sigma|X) &= \frac{p(\mu,\sigma)\cdot p(X|\mu,\sigma)}{\int\int p(X|\mu,\sigma)d\mu d\sigma} \\
+&\approx \frac{p(\mu_i,\sigma_j)\cdot p(X|\mu_i,\sigma_j)}{\sum_{i,j} p(X|\mu_i,\sigma_j)p(\mu_i,\sigma_j)}\\
+\end{align*}
+$$
+
+Thus, we just need to compute: $p(\mu_i,\sigma_j)$ and $p(X|\mu_i,\sigma_j)$ for each grid point $(\mu_i,\sigma_j)$ in the `parameter_grid`.
+
+Note that we will assume the two parameters $\mu$ and $\sigma$ are independent. In this case, the joint prior $p(\mu_i,\sigma_j)$ reduces to:
+
+$$
+p(\mu_i,\sigma_j) = p(\mu_i)p(\sigma_j) = \text{dnorm}_{140,50}(\mu_i) \cdot \text{dunif}_{0,100}(\sigma_j)
+$$
+
+We also assume that each of the 10 observations of $X$ are independent, in which case the likelihood reduces to:
+
+$$
+\begin{align*}
+p(X|\mu_i,\sigma_j) &= p(X = x_1, X = x_2,\ldots, X = x_{10}|\mu_i,\sigma_j) \\
+&= p(x_1|\mu_i,\sigma_j) \cdot p(x_2|\mu_i,\sigma_j) \cdot \ldots \cdot p(x_{10}|\mu_i,\sigma_j) \\
+&= \text{dnorm}_{\mu_i,\sigma_j}(x_1) \cdot \ldots \cdot \text{dnorm}_{\mu_i,\sigma_j}(x_{10})
+\end{align*}
+$$
+
+```{r}
+# for each point (mu, sigma) in parameter_grid
+# compute the likelihood
+likelihood <- c()
+mu_trace <- c()
+sigma_trace <- c()
+
+for (sigma in sigma_grid){
+  for (mu in mu_grid){
+    mu_trace <- append(mu_trace, mu)
+    sigma_trace <- append(sigma_trace, sigma)
+    likelihood <- append(likelihood, prod(dnorm(X_data, mean = mu, sd = sigma)))
+  }
+}
+```
+
+```{r}
+# organize components into a tibble
+posterior_grid <- tibble(
+  mu = mu_trace,
+  sigma = sigma_trace,
+  likelihood = likelihood
+)
+
+# now we add the priors into the tibble
+posterior_grid <- posterior_grid %>% 
+  mutate(
+    prior_mu = dnorm(mu, mean = 140, sd = 50),
+    prior_sigma = dunif(sigma, min = 0, max = 100)
+  )
+
+# Finally, compute the posterior using bayes formula
+posterior_grid <- posterior_grid %>% 
+  mutate(
+    posterior = (prior_mu * prior_sigma * likelihood),
+    posterior = posterior/sum(posterior)
+  )
+```
+
+### Visualization of Bayesian Updating
+
+To "see" the updating happen, let's plot a graphical representation of the joint prior distribution.
+
+```{r}
+# graphical representation of the joint prior distribution
+posterior_grid %>% 
+  ggplot(aes(x = mu, y = sigma, color = prior_mu * prior_sigma)) + 
+  geom_point(size = 0.7) + 
+  scale_color_viridis_c(option = "magma")
+```
+
+This graph is a heat map: brighter points on the grid represent the combinations of $(\mu,\sigma)$ we initially thought were the most plausible. 
+
+Let's compare this to the same graphical representation of the joint posterior:
+
+```{r}
+# graphical representation of the joint posterior
+posterior_grid %>% 
+  ggplot(aes(x = mu, y = sigma, color = posterior)) + 
+  geom_point(size = 0.7) + 
+  scale_color_viridis_c(option = "magma")
+```
+
+Notice that the bright spots have now concentrated into a tighter region centered around $\mu \approx 170$ and $\sigma \approx 30$.
+
+We can look at the posterior for $\mu$ by itself; this is just the marginal distribution of $\mu$ (aka the "marginal posterior" of $\mu$):
+
+```{r}
+# graphical representation of the marginal posterior of mu
+marginal_posterior_mu <- posterior_grid %>% 
+  group_by(mu) %>% 
+  summarise(
+    posterior_mu = sum(posterior, na.rm = TRUE),
+    .groups = "drop"
+  ) 
+
+marginal_posterior_mu %>% 
+  ggplot(aes(x = mu, y = posterior_mu)) + 
+  geom_point() + 
+  geom_line()
+```
+
+The posterior distribution tells that, based on our initial beliefs combined with the observed data, the new estimate for $\mu$ is likely around 190 pounds, with some uncertainty. We can quantify this uncertainty using a **credible interval**:
+
+```{r}
+marginal_posterior_mu %>% 
+  filter(
+    mu >= 150,
+    mu <= 220
+  ) %>% 
+  summarise(
+    probability = sum(posterior_mu)
+  )
+```
+
+So the interval $150 \leq \mu \leq 220$ accounts for about 87% of the posterior distribution's mass. Unlike the frequentist paradigm, this 87% interval *can* be interpreted as a probability: there is a 87% chance that `true_mu` is between 150 pounds and 220 pounds.
+
+In fact, the "true" value of $\mu$ is:
+
+```{r}
+print(true_mu)
+```
+
+### Strength of Evidence and Regularization
+
+Let's compare the prior of $\mu$ to the posterior of $\mu$:
+
+```{r}
+tibble(
+  mu = mu_grid,
+  prior = dnorm(mu, 140, 50),
+  posterior = marginal_posterior_mu$posterior_mu
+) %>% 
+  ggplot(aes(x = mu)) + 
+  geom_point(aes(y = prior), color = "red") + 
+  geom_line(aes(y = prior), color = "red") + 
+  geom_line(aes(y = posterior), color = "purple") + 
+  geom_line(aes(y = posterior), color = "purple")
+```
+
+Notice that the prior distribution (red) is much wider and flatter than the posterior distribution (blue). This is because, after observing some actual data, the posterior distribution becomes more certain of specific values of $\mu$ based on the observed data.
+
+This phenomenon is true in general: the more data we observe, the more certain and "tight" the posterior distribution becomes
+
+```{r}
+# generate a second posterior, this time using 10 observations instead of 5
+sample_size = 10
+set.seed(seed_value)
+X_data2 = rnorm(sample_size, mean = true_mu, sd = true_sigma)
+
+# for each point (mu, sigma) in parameter_grid
+# compute the likelihood
+likelihood <- c()
+mu_trace <- c()
+sigma_trace <- c()
+
+for (sigma in sigma_grid){
+  for (mu in mu_grid){
+    mu_trace <- append(mu_trace, mu)
+    sigma_trace <- append(sigma_trace, sigma)
+    likelihood <- append(likelihood, prod(dnorm(X_data2, mean = mu, sd = sigma)))
+  }
+}
+
+# organize components into a tibble
+posterior_grid2 <- tibble(
+  mu = mu_trace,
+  sigma = sigma_trace,
+  likelihood = likelihood
+)
+
+# now we add the priors into the tibble
+posterior_grid2 <- posterior_grid2 %>% 
+  mutate(
+    prior_mu = dnorm(mu, mean = 140, sd = 50),
+    prior_sigma = dunif(sigma, min = 0, max = 100)
+  )
+
+# Finally, compute the posterior using bayes formula
+posterior_grid2 <- posterior_grid2 %>% 
+  mutate(
+    posterior = (prior_mu * prior_sigma * likelihood),
+    posterior = posterior/sum(posterior)
+  )
+
+# graphical representation of the marginal posterior of mu
+marginal_posterior2_mu <- posterior_grid2 %>% 
+  group_by(mu) %>% 
+  summarise(
+    posterior_mu = sum(posterior, na.rm = TRUE),
+    .groups = "drop"
+  )
+```
+
+Let's plot the marginal posterior
+
+```{r}
+tibble(
+  mu = mu_grid,
+  prior = dnorm(mu, 140, 50),
+  posterior = marginal_posterior_mu$posterior_mu,
+  posterior2 = marginal_posterior2_mu$posterior_mu
+) %>% 
+  ggplot(aes(x = mu)) + 
+  geom_line(aes(y = prior), color = "red") + 
+  geom_line(aes(y = posterior), color = "purple") + 
+  geom_line(aes(y = posterior2), color = "blue")
+```
+
+The red curve is the prior, the purple curve is the posterior with sample size 5, and the blue curve is the posterior with sample size 10. Notice that the blue curve inches closer to the true value of $\mu$ and also gets tighter. This is because more data will always lead to better estimates and more certainty. In other words: the posterior adapts our beliefs based on the *strength* of the observed evidence.
+
+There is a "dual" perspective: the prior can be thought of as regularization against insufficient data. For example, ridge regression (aka L2-penalty) penalizes the regression model for coefficient estimates that are very large. In essence, we are placing a prior distribution on the coefficients: we think they should be concentrated near zero, unless there is very strong evidence (measured by predictive power) for the coefficient to be far away from zero. In fact, an L2-penalty term in a regression is equivalent to stipulating a normal/Gaussian prior on the coefficients!
+
+<br>
+
+---
+
+<br>
+
+# 1.4 Log-Likelihood And Dealing With Underflow
+
+## The Problem of Underflow
+
+One of the major computational challenges with computing likelihoods $p(X|\theta)$ is *underflow*. Underflow is the problem where numerical values become too small to be stored in computer memory. Intuitively, a computer can only store a finite number of decimal places before it has to cut off the number; underflow occurs when the number is smaller than the alotted number of decimal places in computer memory, leading to the computer to treat it as the number 0.
+
+This is a major problem when working with probabilities: probabilities are almost always less than 1, so they get smaller and smaller as we begin to multiply the probabilities together. This is especially egregious in the likelihood function, where we have to multiply all the probabilities of observing each individual point of data. For example, suppose we took a simple random sample of 100 observations $x_1,\ldots,x_{100}$ of a variable $X$. Then the likelihood is:
+
+$$
+\text{likelihood} = p(x_1,\ldots,x_{100}|\theta) = \prod_{i=1}^{100}p(x_i|\theta)
+$$
+
+If each of the individual densities are very small, say $p(x_i|\theta) = 0.01$, then the likelihood would be $10^{-200}$ and require at least 200 decimal places to represent this value. Since computers only have finite memory, this number would underflow to 0. Consequently, the posterior would itself get reduced to 0:
+
+$$
+\text{posterior} = \frac{\text{prior}\cdot \text{likelihood}}{\text{normalizing constant}} = \frac{\text{prior}\cdot 0}{\text{normalizing constant}} = 0
+$$
+
+As a result, our numerical approximation algorithms would fail to properly compute the posterior.
+
+<br>
+
+## Log-Likelihood
+
+One way to mitigate the effects of underflow is to re-scale the data using a log-transform:
+
+$$
+\begin{align*}
+\text{log-likelihood} &= \log p(x_1,\ldots,x_n|\theta) \\
+&= \log \prod_{i=1}^{100}p(x_i|\theta) \\
+&= \sum_{i=1}^{100}\log p(x_i|\theta)
+\end{align*}
+$$
+
+There are 3 main benefits to the log-transform:
+
+1) The product gets converted to a sum; adding two small numbers does not return an even smaller number (as opposed to multiplying small numbers). This helps mitigate underflow when the number of observations is large.
+
+2) The $\log()$ function "stretches" the interval $(0,1)$ to the larger interval $(-\infty, 0)$. This means that numbers which were close to 0, get pulled further away from 0 so the risk of underflowing to 0 is reduced. For example, we need 200 decimal places just to distinguish $10^{-200}$ from 0, but we only need 10 decimal places to get a good estimate for $\log(10^{-200})$:
+
+$$
+\log(10^{-200}) = -200 \cdot \log(10) \approx -200 \cdot 2.30258509299 = -460.5170118
+$$
+
+3) The $\log()$ function is *monotonic* increasing: $\log(x_1) \leq \log(x_2)$ if and only if $x_1\leq x_2$. This is very important because it means $\log()$ *preserves minimums and maximums*. That is, $x$ is a min/max for $f(x)$ if and only if $x$ is a min/max for $\log(f(x))$.
+
+To leverage the benefits of the log-transform, we will do the following:
+
+1) Compute $\log(\text{prior}\cdot \text{likelihood}) - \max(\log(\text{prior}\cdot \text{likelihood})$. Subtracting out the max is equivalent to a max-scaling and further rescales the data to prevent underflow.
+2) Invert the transform by exponentiating: $exp(\log(\text{prior}\cdot \text{likelihood}) - \max(\log(\text{prior}\cdot \text{likelihood}))$. This will return the *un-normalized* posterior (i.e. its "almost" the posterior, but the probabilities don't add up to 1).
+3) Scale by the normalizing constant (re-scale the numbers so they add up to 1).
+
+In more technical detail:
+
+$$
+\begin{align*}
+\log(\text{prior} \cdot \text{likelihood}) &= \log(p(\theta)\cdot p(X|\theta)) \\
+&= \log p(\theta) + \log p(X|\theta)\\
+&= \log p(\theta) + \sum_{i=1}^N\log p(x_i|\theta)
+\end{align*}
+$$
+
+<br>
+
+## Grid Approximation With Logs
+
+Since the benefits of the log-transform is numerous, we should re-code our grid search algorithm to use the log-likelihood instead, to help mitigate underflow errors we might run into.
+
+```{r}
+# Log-likelihood should help us deal with underflow, so new algo 
+# should be able to handle more observations
+sample_size = 100
+set.seed(seed_value)
+X_data3 = rnorm(sample_size, mean = true_mu, sd = true_sigma)
+
+# for each point (mu, sigma) in parameter_grid
+# compute the log-likelihood
+log_likelihood <- c()
+mu_trace <- c()
+sigma_trace <- c()
+
+for (sigma in sigma_grid){
+  for (mu in mu_grid){
+    mu_trace <- append(mu_trace, mu)
+    sigma_trace <- append(sigma_trace, sigma)
+    
+    # compute log-likelihood instead of likelihood; this is done by:
+    # 1) flipping 'prod()' to 'sum()'
+    # 2) return log(dnorm()) instead of dnorm()
+    log_likelihood <- append(log_likelihood, sum(dnorm(X_data3, mean = mu, sd = sigma, log = TRUE)))
+  }
+}
+
+# organize components into a tibble
+posterior_grid3 <- tibble(
+  mu = mu_trace,
+  sigma = sigma_trace,
+  log_likelihood = log_likelihood
+)
+
+# now we add the log-priors into the tibble
+posterior_grid3 <- posterior_grid3 %>% 
+  mutate(
+    log_prior_mu = dnorm(mu, mean = 140, sd = 50, log = TRUE),
+    log_prior_sigma = log(dunif(sigma, min = 0, max = 100))
+  )
+
+# Compute unnormalized posterior by summing logs then inverting transform
+posterior_grid3 <- posterior_grid3 %>% 
+  mutate(
+    log_posterior = log_prior_mu + log_prior_sigma + log_likelihood,
+    log_posterior = log_posterior - max(log_posterior),
+    posterior = exp(log_posterior),
+    posterior = posterior/sum(posterior)
+  )
+```
+
+```{r}
+# graphical representation of the joint posterior using N=100 observations
+posterior_grid3 %>% 
+  ggplot(aes(x = mu, y = sigma, color = posterior)) + 
+  geom_point(size = 0.7) + 
+  scale_color_viridis_c(option = "magma")
+```
+
+```{r}
+# contour plot of the posterior, zoomed into small region of highest probability
+z <- posterior_grid3 %>% 
+  tidyr::pivot_wider(
+    id_cols = mu,
+    names_from = sigma,
+    values_from = posterior
+  ) %>% 
+  select(-mu) %>% 
+  as.matrix()
+
+contour(
+  x = mu_grid,
+  y = sigma_grid,
+  z = z,
+  xlim = c(160,180),
+  ylim = c(25,45)
+)
+```
+
+
+# 1.5 Sampling From the Posterior and The Posterior Predictive
+
+## Sampling From the Posterior
+
+The posterior $p(\mu,\sigma|X)$ is a distribution, hence it is possible to simulate new data by sampling from this distribution:
+
+```{r}
+posterior_samples_size <- 1000
+set.seed(seed_value)
+
+# sample the rows in posterior_grid3, according to the posterior density of that row
+posterior_sample <- sample(
+  1:nrow(posterior_grid3),
+  size = posterior_samples_size,
+  prob = posterior_grid3$posterior,
+  replace = TRUE
+)
+
+# extract mu and sigma values from the sampled rows
+mu_sample <- posterior_grid3$mu[ posterior_sample ]
+sigma_sample <- posterior_grid3$sigma[ posterior_sample ]
+
+# plot the sample
+tibble(
+  mu = mu_sample,
+  sigma = sigma_sample
+) %>% 
+  ggplot(aes(x = mu, y = sigma)) + 
+  geom_point(position = "jitter", alpha = 0.2) + 
+  xlim(100, 200) + 
+  ylim(20, 50)
+```
+
+Each point in the plot represents a possible combination of $(\mu,\sigma)$; these combos occur with frequency according to the posterior distribution.
+
+<br>
+
+## The Posterior Predictive Distribution
+
+We can use the posterior distribution $p(\mu,\sigma|X)$ to predict what a new value of $X$ would look like. For example, suppose our friend in the US asked us to guess their weight. We have just done a lot of work to construct a posterior distribution $p(\mu,\sigma|X)$. Combined with the likelihood function $p(X|\mu,\sigma)$, we have a statistical model of US adult weights behave. We would like to use this model to generate a prediction: our friend's weight.
+
+To do this, we need to sample a new value for the random variable $X$. However, $X$'s behavior is dependent on $\mu$ and $\sigma$, and we have uncertainty about the exact value of $\mu$ and $\sigma$. So to properly sample a new value for $X$, what we first need to do is generate a sample for $\mu$ and $\sigma$, i.e. sample from the posterior. Then, for each value of $\mu$ and $\sigma$ we sampled, simulate draws of $X$ to estimate the conditional distribution $X|\mu,\sigma$. We then collect all the samples into a single pool of $X$ values to generate a distribution $p(X)$; this distribution is called the **posterior predictive** distribution and it "predicts" what new values of $X$ would look like if we were to observe more data.
+
+More succinctly, the algorithm is:
+
+1) Draw a sample of $(\mu,\sigma)$ from the posterior distribution $p(\mu,\sigma|X)$.
+2) For each combo $(\mu,\sigma)$ sampled, draw a sample of $X$ values from the likelihood $p(X|\mu,\sigma)$. This simulates the conditional distribution $X|\mu,\sigma$.
+3) Pool all sampled $X$ values together. This forms a sample from the posterior $p(X)$ and simulates the posterior predictive distribution.
+
+
+```{r}
+# we have a (mu,sigma) sample from previous section;
+# loop through each point to simulate 100 draws from X | mu, sigma
+
+posterior_predictive_sample <- c()
+X_draws = 100
+
+for (i in 1:length(mu_sample)){
+  mu = mu_sample[i]
+  sigma = sigma_sample[i]
+  posterior_predictive_sample <- append(
+    posterior_predictive_sample,
+    rnorm(X_draws, mean = mu, sd = sigma) # our likelihood was p(X| mu, sigma) ~ N(mu, sigma)
+  )
+}
+
+tibble(
+  X = posterior_predictive_sample
+) %>% 
+  ggplot(aes(x = X)) + 
+  geom_histogram()
+```
+
+We originally set out to make a single guess for our friend's weight, but we have constructed an *entire distribution* of possible $X$ values. Having the entire distribution at our fingertips allows us to come up with different guesses, based on various considerations.
+
+For example, the distribution looks relatively normal, so the mean, median, and mode likely coincide at the same number. If we just needed a single guess that minimizes prediction error, we could use the mean of the sample:
+
+```{r}
+print(paste0("Our Guess: ", round(mean(posterior_predictive_sample),2), " pounds"))
+```
+
+But now suppose that our friend wants to play a game with the following rules.
+
+1) We guess a *range* of values $[a,b]$. If our friend's weight falls within the range, we win some money. Otherwise, we lose some money.
+2) If we guess a wide enough range like $[0, 200]$ we will almost always beat our friends. To make the game interesting, the payout is a fixed 10 dollars if we win. However, we have to *buy* the range of numbers we guess: 1 dollar must be spent for every 1 pound difference between the smallest weight and the largest weight in the interval. So if we guess the interval $[a,b]$ we must pay a price of $b-a$ dollars. In this way, if we guess a wide interval like $[0,200]$, we would have to spend 200 dollars just to win 10 dollars.
+3) Given this set up, what interval should we guess?
+
+This is an interesting problem and can only really be tackled by inspecting the entire posterior predictive distribution $p(X)$. To start, the size of the interval $[a,b]$ must be limited to a length of no more than 10; otherwise, we would always spend more money than we win. So a basic question we could ask is this: what interval $[a,b]$ of length 10 maximizes our chance of winning?
+
+```{r}
+percentiles = seq(0, 1, by = 0.005)
+
+quantile(posterior_predictive_sample, probs = percentiles)
+```
+
+Based on the percentiles, one reasonable guess would be the interval $[162, 172]$: the posterior predictive says there is about a 12% chance our friend's weight falls into this interval, and this 12% seems to be one of the largest probabilities across the table.
+
+We could also consider the other extreme and only pick a 1 pound window; this would maximize our payout at 9 dollars should we win. Based on the table, it seems guessing $[168, 169]$ offers a 1.5% chance of winning, which seems to be one of the largest winning percentages for a 1 pound interval.
+
+In theory, we could repeat this computation for all the possible interval lengths $1,2,\ldots, 10$ and find an interval with maximum winning percentage for each interval length. We could then compare this with the payout from winning and ultimately pick the interval which maximizes the expected payout.
+
