@@ -1,0 +1,274 @@
+
+# Setup
+
+```{r, message = FALSE, warning = FALSE}
+options(scipen = 999)
+ROOT <- rprojroot::find_rstudio_root_file()
+
+DATA_DIR <- paste0(ROOT, "/data/kaggle/store-sales-time-series-forecasting/")
+
+SEED <- 1738
+
+library(dplyr)
+library(tidyr)
+library(lubridate)
+library(ggplot2)
+library(scales)
+library(readr)
+```
+
+## Load Data
+
+```{r}
+setwd(DATA_DIR)
+system("ls -la")
+```
+
+
+```{r, warning = FALSE, message = FALSE}
+setwd(DATA_DIR)
+df_sales <- read_csv("train.csv") %>% 
+  group_by(date) %>% 
+  summarise(
+    sales = sum(sales, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+df_events <- read_csv("holidays_events.csv") %>% 
+  rename(
+    event_type = type,
+    event_locale = locale,
+    event_locale_name = locale_name,
+    event_description = description,
+    event_transferred = transferred
+  )
+
+df_oil <- read_csv("oil.csv") %>% 
+  rename(
+    oil_price = dcoilwtico
+  )
+
+df_model <- tibble(
+    date = seq(ymd("2013-01-01"), ymd("2017-08-15"), by = "day")
+  ) %>% 
+  left_join(
+    df_sales,
+    by = "date"
+  ) %>% 
+  left_join(
+    df_events,
+    by = "date"
+  ) %>% 
+  left_join(
+    df_oil,
+    by = "date"
+  )
+```
+
+```{r}
+df_model %>% 
+  filter(
+    is.na(sales)
+  )
+```
+
+
+## Prep Data
+
+```{r}
+prep_data <- function(df){
+  df <- df %>% 
+    mutate(
+      sales = ifelse(month(date) == 12 & mday(date) == 25, 0, sales),
+      days_since_origin = as.numeric(date - ymd("2013-01-01")),
+      week = week(date),
+      month = month(date),
+      day_of_year = paste0(month(date), "-", mday(date)),
+      day_of_year_num = yday(date),
+      is_new_years_day = ifelse(month(date) == 1 & mday(date) == 1, 1, 0),
+      day_of_december = ifelse(month(date) == 12 & mday(date) < 25, mday(date), 0),
+      post_christmas = ifelse(month(date) == 12 & mday(date) > 25, 1, 0),
+      
+      day_of_week = as.character(wday(date)),
+      day_of_week_num = wday(date)
+    )
+  
+  return(df)
+}
+
+
+
+df_train <- df_model %>% 
+  filter(
+    date <= "2015-12-31"
+  ) %>% 
+  prep_data()
+
+df_test <- df_model %>% 
+  filter(
+    date > "2015-12-31",
+    date <= "2016-12-31",
+    date != "2016-02-29"
+  ) %>% 
+  prep_data()
+
+df_validate <- df_model %>% 
+  filter(
+    date > "2016-12-31"
+  ) %>% 
+  prep_data()
+```
+
+
+
+## Helper Functions
+
+```{r}
+get_all_predictions <- function(model){
+  bind_rows(
+    tibble(
+      data = "train",
+      date = df_train$date,
+      actual = df_train$transactions,
+      forecast = predict(model, df_train)
+    ),
+    tibble(
+      data = "test",
+      date = df_test$date,
+      actual = df_test$transactions,
+      forecast = predict(model, df_test)
+    )
+  ) %>% 
+    mutate(
+      forecast = case_when(
+        forecast < 0 ~ 0,
+        month(date) == 1 & mday(date) == 1 ~ 0,
+        
+        TRUE ~ forecast
+      ),
+      residual = actual - forecast
+    )
+}
+```
+
+```{r}
+eval_errors <- function(df){
+  
+  df %>% 
+    group_by(
+      data
+    ) %>% 
+    summarise(
+      MSE = mean( (actual-forecast)^2, na.rm = TRUE),
+      root_mslog = sqrt( mean( ( log(1 + forecast) - log(1 + actual) )^2 ) ),
+      MAE = mean(abs( (actual-forecast) ), na.rm = TRUE),
+      .groups = "drop"
+    )
+}
+```
+
+```{r}
+plot_forecast <- function(df){
+  df %>% 
+    ggplot(aes(date)) + 
+    geom_line(aes(y = actual)) + 
+    geom_line(aes(y = forecast, color = data))
+}
+```
+
+
+# Events
+
+## Event Type
+```{r}
+df_events %>% 
+  mutate(year = year(date)) %>% 
+  group_by(event_type, year) %>%
+  summarise(
+    count = n(),
+    .groups = "drop"
+  ) %>% 
+  pivot_wider(
+    id_cols = event_type,
+    names_from = year,
+    values_from = count
+  )
+```
+
+* Transfer means an event that was suppose to happen on a previous date was moved to the current date
+* Bridge is an extra day added to a holiday (to extend breaks into a long weekend for example)
+* Work Day is day that is not normally scheduled for work that is meant to payback a Bridge day
+
+We notice that 2014 and 2016 have a large count for `event_type` of "Event".
+
+```{r}
+df_events %>% 
+  filter(
+    event_type == "Event"
+  )
+```
+
+The events can be categorized as:
+
+* Dia de la Madre (Mother's Day)
+* Shopping Holidays (Black Friday, Cyber Monday)
+* Mundial de futbol Brasil (FIFA World Cup, hosted in Brazil 2014)
+* Terremoto Manabi (2016 Ecuador Earthquake)
+
+From this list of events, we should expect that June 2014 should not follow the same seasonal trend expectations as June of other years. Similarly, April of 2016 should not follow the same seasonal trend expectations as other years.
+
+```{r}
+df_train %>% 
+  filter(
+    month(date) %in% c(6,7)
+  ) %>% 
+  mutate(year = year(date)) %>% 
+  group_by(year) %>% 
+  mutate(day = row_number()) %>% 
+  ungroup() %>% 
+  ggplot(aes(day, sales, color = as.factor(year))) + 
+  geom_line()
+```
+```{r}
+df_train %>% 
+  filter(
+    month(date) %in% c(6,7)
+  ) %>% 
+  mutate(
+    year = year(date),
+    day_of_week = wday(date)
+  ) %>% 
+  group_by(year) %>% 
+  mutate(day = row_number()) %>% 
+  ungroup() %>% 
+  filter(day >= 5, day <= 10) %>% 
+  select(
+    date,
+    year,
+    day_of_week,
+    sales,
+    everything()
+  )
+```
+
+
+## Transferred
+```{r}
+df_events %>% 
+  distinct(event_transferred)
+```
+
+A "transferred" event is an event which was suppose to happen on the current day, but was transferred to a later date. Each event with `event_transferred = TRUE` should map to a later event of `event_type = "Transfer"`.
+
+```{r}
+df_events %>% 
+  filter(
+    event_transferred == TRUE | event_type == "Transfer"
+  ) %>% 
+  mutate(
+    year = year(date)
+  ) %>% 
+  arrange(event_description)
+```
+
+

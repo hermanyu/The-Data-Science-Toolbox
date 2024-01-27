@@ -1,0 +1,328 @@
+
+# 02 Autocovariance And Stationarity
+
+```{r}
+options(scipen = 999)
+ROOT <- rprojroot::find_rstudio_root_file()
+
+SEED <- 1738
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(scales)
+```
+
+
+<br>
+
+# Introduction
+
+So we have a few different ways to think about time series data, namely:
+
+0) as plain white noise $w_t$
+1) as an *autoregressive process* $AR(p)$ 
+2) as a *moving average process* $MA(q)$
+
+Ultimately, our job is to choose which process we think is most appropriate for the data we are observing. This begs the question: how do we decide what kind of model to use?
+
+One approach is to think about the different mathematical/statistical properties of the various models. We can then try to analyze the data to see if the data exhibits any of these properties. The two most important properties are the *autocovariance function* and *stationarity*.
+
+Recall that a time series process is an entire *sequence* of random variables. So instead of talking about "the mean" of a single distribution, we have to talk about "the mean function" $\mu(t) = E[X_t]$. If we push this idea a bit: each $X_s$ and $X_t$ are potentially different random variables, so it makes sense to think about the covariance between them. This defines a function $Cov(s,t) = Cov(X_s, X_t)$ called the **autocovariance function**. The hope is that we can estimate the autocovariance function of a time series and match it back to an $AR(p)$ or $MA(q)$ process.
+
+But then this leads to a question: how do we actually estimate the autocorrelation function? Recall that a time series is really just a single data point (one path) from the entire outcome space (infinitely many paths). In other words, a single time series only contains a single value of $X_s$ and a single value of $X_t$, so how on Earth could we possibly compute the covariance $Cov(X_s, X_t)$?
+
+This is where **stationarity** comes in: a stationary time series is a time series process which is "invariant to shifts" (whatever that means). If our time series is invariant to shifts, then we can treat the process $(X_t)_{t\in \mathbb{Z}}$ and all shifted copies $(X_{t+h})_{t\in\mathbb{Z}}$ of the process *as a sample* from the same underlying outcome space! This allows us to estimate the autocovariance $Cov(X_s, X_t)$ by letting $h = t-s$ and then computing the sample covariance from $(x_i, x_{i+h})_{i\in\mathbb{Z}}$. Heuristically, a stationary time series is analogous to a simple random sample in basic statistics.
+
+<br>
+
+---
+
+<br>
+
+# 2.1 Autocovariance
+
+## Definition
+
+In regular statistics, if we have a random variable $X$, we can talk about "the mean" $\mu(X)$. However, a time series is a sequence of random variables $(X_t)$, so we need to instead talk about the **mean function**:
+
+$$
+\mu(t) = \mu(X_t) = E[X_t]
+$$
+
+This function $\mu(t)$ is a function of time $t$ and returns the expected value of the time series at time $t$. Similarly, we can no longer talk about "the variance" $Var(X)$ but instead need to talk about **the variance function**:
+
+$$
+Var(t) = Var[X_t]
+$$
+
+Now, since each $X_t$ in a time series $(X_t)$ is a (potentially) distinct random variable, we can also think about the covariance between each of the random variables inside the process:
+
+$$
+K_X(s,t) = Cov(X_t, X_s)
+$$
+
+The function $K_X(s,t)$ is called the **autocovariance function**. Similarly, we can look at the correlation between the different random variables in the process:
+
+$$
+\rho_X(s,t) = \frac{K_X(s,t)}{\sqrt{K_X(s,s)K_X(t,t)}}
+$$
+
+This function is called the **autocorrelation function**. Intuitively, the autocovariance and autocorrelation function tells us about how the time series $(X_t)$ is structured across time. For example, if a time series $(X_t)$ has:
+
+$$
+\rho_X(1, 2) = 0.9 
+$$
+
+then this tells us that $X_2$ is very close to being linearly proportional to $X_1$; this means that if $X_1$ is large, it's we know that $X_2$ is likely to be large as well. On the other hand, if we know that:
+
+$$
+\rho_X(3,4) = 0.01
+$$
+
+then we know $X_4$ probably won't scale proportionally to whatever $X_3$ is.
+
+## Example: Autocovariance of AR(1)
+
+Consider a decaying AR(1) process: $X_t = \theta X_{t-1} + w_t$ where $|\theta|<1$. Since this is a causal linear process, we can use the infinite sum representation of $X_t$ to compute the autocovariance function:
+
+$$
+\begin{align*}
+K_X(s, t) &= Cov(X_s, X_t)\\
+&= E\left[(X_s - \mu(s))(X_t - \mu(t)) \right] \\
+&= E\left[(X_s)(X_t) \right] \\
+&= E\left[\sum_{i=0}^{\infty}\theta^jw_{s-i} \cdot \sum_{j=0}^{\infty}\theta^jw_{t-j}\right] \\
+&= E\left[ \sum_{i,j=0}^{\infty}\theta^i\theta^jw_{s-i}w_{t-j} \right] \\
+&= \sum_{i,j=0}^{\infty}\theta^{i+j}E[w_{s-i}w_{t-j}] \\
+&= \sum_{i,j=0}^{\infty}\theta^{i+j}E[(w_{s-i} - 0)(w_{t-j} - 0)] \\
+&= \sum_{i,j=0}^{\infty}\theta^{i+j}Cov(w_{s-i}, w_{t-j}) \\
+&= \sum_{i,j=0}^{\infty}\theta^{i+j}\sigma^2I(s-j = t-i) \\
+&= \sigma^2 \theta^{|s-t|} \sum_{j=0}^{\infty}\theta^{2j}\\
+&= \sigma^2 \theta^{|s-t|} \frac{1}{1-\theta^{2j}}
+\end{align*}
+$$
+
+So $K_X(s,t) = \sigma^2 \theta^{|s-t|} / (1-\theta^{2j})$. In particular, notice that $K_X(s,t)$ does not actually depend on  $s$ and $t$, but rather on their distance $|s - t|$. In particular this implies: for a decaying AR(1) process, the autocovariance function $K_X(s,t)$ is lag-invariant: $K_X(s, t) = K_X(s + h, t + h) = K_X(h)$.
+
+<br>
+
+---
+
+<br>
+
+# 2.2 Cross-Covariance
+
+Given two time series $(X_t)$ and $(Y_t)$, the **cross-covariance function** is defined to be
+
+$$
+K_{XY}(s,t) = Cov(X_s, Y_t)
+$$
+
+Similarly, the **cross-correlation function** is defined to be:
+
+$$
+\rho_{XY}(s, t) = \frac{K_{XY}(s,t)}{K_X(s,s)K_Y(t,t)}
+$$
+
+Intuitively, cross-correlations tell us about the structural dependencies between a "response" time series $Y$ and a predictor time series $X$.
+
+<br>
+
+---
+
+<br>
+
+# 2.3 Stationarity
+
+The mean function, autocovariance function, and autocorrelation function are defined in terms of the random variables of a time series $(X_t)$; we don't actually know what they really are in the real word. As such, we usually need to estimate them from the observed data. In basic statistics, we usually estimate unknown quantities by drawing a random sample and computing a sample statistic. This presents a issue: a time series is fundamentally a single data point (one path) from the outcome space (all possible paths). As such, a time series isn't really a sample from a single distribution. Without any further assumptions on the structure, there really is no viable solution. So naturally, we can ask the question: what kind of structure would my time series need in order for me to estimate the mean, autocovariance, and autocorrelation functions?
+
+The answer is *stationarity*. A time series is **weakly stationary** if:
+
+a) $E[X_t] = E[X_{t+r}] = \mu$ for any $r > 0$. In other words: the expected value for any two points in time are the same.
+b) $K_X(s,t) = K_X(s+r, t+r)$ for any $r > 0$. In other words: the dependency between time points is only dependent on the difference in time, not the actual location in time.
+
+A time series is **strongly stationary** or just **stationary** if for any collection of time points $t_1,\ldots,t_k$ we have 
+$$F(X_{t_1},\ldots, X_{t_k}) = F(X_{t_1 + r},\ldots, X_{t_k + r}) \qquad \forall r > 0$$
+
+where $F$ is the joint probability distribution. Note that strongly stationary time series is, by definition, also a weakly staionary time series.
+
+Intuitively, *stationarity* just says that the time series is "lag invariant", meaning that lags of the time series behave roughly the same as the original. If the time series is stationary, we can do something very clever: consider the autocovariance $K_X(s,t)$. Let $h = t-s$ and consider the autocovariance $K_X(0, h)$. If the time series is weakly stationary, then:
+
+$$
+\begin{align*}
+K_X(0, h) &= K_X(0, t-s) \\
+&= K_X(0 + s, t-s+s) \\
+&= K_X(s,t)
+\end{align*}
+$$
+
+In other words, if the time series is weakly stationary, then the 2-variable autocovariance function $K_X(s,t)$ *reduces down* to a function of a single variable $K_X(h) = K_X(h,0)$! Consequently, this is what allows us to estimate the covariance function $K_X(s,t) = K_X(h)$ using a single time series (i.e. a single path out of all possible paths).
+
+<br>
+
+---
+
+<br>
+
+# 2.4 Estimators
+
+In order to get estimates, we need a random sample of multiple observations. The issue is that a general time series is really only a single observation; one path out of infinitely many possible paths. This makes estimation of a general time series impossible. However, if the time series is *weakly stationary* , i.e. lag invariant, then we can recover some estimates.
+
+## Estimating The Mean
+
+Suppose $(X_t)$ is a weakly stationary time series. Then the mean function $\mu(t) = E[X_t]$ is a constant function $\mu(t) = \mu$. As such, estimating the mean function $\mu(t)$ just requires estimating the single value of $\mu$. 
+
+Suppose $(X_1 = x_1,\ldots,X_T = x_t)$ is one observation of the process $(X_t)$. Then the **sample mean** 
+
+$$
+\overline{X} = \frac{1}{T}\sum_{i = 1}^Tx_i
+$$
+
+is an unbiased estimator of the constant function $\mu(t) = \mu$.
+
+
+Naturally, one question we can ask is: what is the standard error of this sample statistic $\overline{X}$?
+
+For a simple random sample $X_1,\ldots,X_T$ (aka i.i.d), the standard error is just:
+
+$$
+\begin{align*}
+Var(\overline{X}) &= Var(X_1 + \ldots + X_T)  \\
+&= Var(X_1) + \ldots + Var(X_n) + \sum_{i,j}2\,Cov(X_i,X_j) \\
+&= Var(X_1) + \ldots + Var(X_n) \\
+&= n\,Var(X)
+\end{align*}
+$$
+
+where the covariance term vanishes because of independence and the variances all collapse into a single quantity because of identical distribution.
+
+However, unlike a true simple random sample, a weakly stationary time series can have correlations between points in time (i.e. observations across time are not independent). Therefore, the estimator for the standard error of the sample mean is a bit more complex than that of a simple random sample:
+
+$$
+\begin{align*}
+Var(\overline{X}) &= Var\left(\frac{1}{T}\sum_{t=1}^TX_t\right) \\
+&= \frac{1}{T}K_X(0) + \frac{2}{T}\sum_{z = 1}^{T-1}\left(1 - \frac{z}{T}\right)K_X(z)
+\end{align*}
+$$
+
+## Estimating The Autocovariance
+
+For a weakly time series $(X_t)$, there is a single mean $\mu =\mu(t)$ and the covariance function $K_X(s,t)$ reduces down to a function of a single variable $K_X(h) = K_X(h,0)$. Thus, for a weakly stationary time series, we can define **sample autocovariance function** as the function:
+
+$$
+\hat{K}_X(h) = \frac{1}{T}\sum_{t=1}^{T-h}(X_{t+h} - \overline{X})(X_t - \overline{X})
+$$
+
+Simiarly, the **sample autocorrelation function** is defined to be the function:
+
+$$
+\hat{\rho}_X(h) = \frac{\hat{K}_X(h)}{\hat{K}_X(0)}
+$$
+
+When the time series is stationary, the sample autocovariance and autocorrelation functions are unbiased estimators for the true autocovariance and autocorrelation functions! This is why stationarity in a time series is so important: we need stationarity in order to be able to estimate the autocovariance and autocorrelation functions.
+
+<br>
+
+---
+
+<br>
+
+
+# 2.5 Detecting The Structure Of A Time Series
+
+The temporal structure of a time series is reflected by its autocovariance and autocorrelation functions. When the time series is weakly stationary, we can estimate the autocovariance and autocorrelation functions from a single observed time series. This means that: if we are given a time series, we can try to use the estimated autocovariance and autocorrelation functions to distinguish what kind of time series we are looking.
+
+```{r}
+source("lib/generate_data_AR.R")
+source("lib/generate_data_MA.R")
+```
+
+
+```{r}
+set.seed = SEED
+vec_time <- seq(1, 100)
+
+df_example <- tibble(
+  time = vec_time,
+  white_noise = rnorm(vec_time, mean = 0, sd = 1),
+  random_walk = generate_ar_series(100, seed = SEED),
+  AR2 = generate_ar_series(100, weights = c(0.5, 0.5), seed = SEED),
+  MA2 = generate_ma_series(100, weights = c(1, 1), seed = SEED)
+)
+```
+
+```{r}
+df_example %>% 
+  tidyr::pivot_longer(
+    cols = -c(time),
+    names_to = "process",
+    values_to = "value"
+  ) %>% 
+  ggplot(aes(time, value)) + 
+  geom_line() + 
+  facet_wrap(~process, ncol = 2)
+```
+
+In R, we can compute the estimated autocovariance using the `acf()` function from the base `stats` package. For example, to compute the estimated autocovariance function for the `white_noise` series:
+
+```{r}
+acf(df_example$white_noise, lag.max = 15)
+```
+
+Here, x-axis gives the lags and corresponds to the input $h$ in the autocovariance function $K_X(h)$. The y-axis gives the estimated output value of $K_X(h)$. We can extract the estimated outputs directly by accessing the `acf` element from the object returned by the `acf()` function:
+
+```{r}
+as.numeric(acf(df_example$white_noise, lag.max = 15, plot = FALSE)$acf[,,1])
+```
+
+We can compare the estimated autocovariance functions to visualize the structural differences between white noise, a random walk, an AR(2), and an MA(9).
+
+```{r}
+df_estimated_autocovariance <- tibble(
+  lag = seq(0, 15),
+  white_noise = acf(df_example$white_noise, lag.max = 15, plot = FALSE)$acf[,,1],
+  random_walk = acf(df_example$random_walk, lag.max = 15, plot = FALSE)$acf[,,1],
+  AR2 = acf(df_example$AR2, lag.max = 15, plot = FALSE)$acf[,,1],
+  MA2 = acf(df_example$MA2, lag.max = 15, plot = FALSE)$acf[,,1]
+)
+
+df_estimated_autocovariance %>% 
+  tidyr::pivot_longer(
+    cols = -c(lag),
+    names_to = "process",
+    values_to = "value"
+  ) %>% 
+  ggplot(aes(lag, value)) + 
+  geom_point() + 
+  facet_wrap(~process, ncol = 2)
+```
+
+Interpreting this plot:
+
+1) The white noise series has very low correlations with its lags; this indicates that a white noise has no dependencies across time, aka no temporal structure.
+
+2) The random walk $AR(1)$ and $AR(2)$ series have very large correlations with its lags, which decrease over time. This indicates that both the $AR(1)$ and $AR(2)$ series are heavily influenced by recent values, with the influence slowly decaying over time.
+
+3) The $MA2$ series has high correlation with lag 1 and moderate correlations with lag 2, but then no real correlations for larger lags. This indicates that an $MA2$ process is only influenced by the 2 most recent time steps only.
+
+Now, there is one major issue we've swept under the rug: the estimated autocovariance is only valid for *stationary* time series processes. We haven't actually shown that the four time series processes above are stationary. In fact:
+
+* White noise is stationary because the mean is 0 at all time points and the autocovariance is also 0.
+
+* The random walk *is not stationary*! For a random walk $X_t = X_{t-1} + w_t$, we actually have $Var[X_t] = \sigma^2t$. Recall that by definition of a weakly stationary process, we must have $Cov(X_s, X_t) = Cov(X_{s+r}, X_{t+r})$ for all possible times $s,t$ and lags $r$. In particular: $Var[X_t] = Cov(X_t, X_t) = Cov(X_{t+r}, Cov_{t+r}) = Var[X_{t+r}]$ for any stationary process; i.e. stationary processes must have constant variance across time! This is obviously not satisfied by a random walk: $Var[X_t] = \sigma^2 t \neq \sigma^2 (t+r) = Var[X_{t+r}]$ for any lag $r \neq 0$.
+
+* An $AR(p)$ process *may or may not be stationary*, depending on the coefficients (weights) in the autoregressive term
+
+* Every $MA(q)$ process is *always stationary* for finite $q$.
+
+If the underlying data generation process is truly stationary, then the `acf()` function returns valid estimates. On the other hand if the underlying data generation process is not stationary, then the `acf()` function will return estimate that don't actually estimate the thing we want! The immediate question then becomes: which time series processes are stationary, and which ones are not?
+
+<br>
+
+---
+
+<br>
+
+
+
+

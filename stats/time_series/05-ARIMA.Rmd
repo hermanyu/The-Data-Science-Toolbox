@@ -1,0 +1,135 @@
+
+# 05 ARIMA
+
+# Introduction
+
+# 5.1 Autoregressive Moving Average Processes (ARMA)
+
+An **autoregressive moving average process of order $p,q$**, denoted ARMA(p,q), is a time series process that is the sum of an AR(p) and MA(q) process:
+
+$$
+X_t = w_t + \sum_{i=1}^p\phi X_{t-i} + \sum_{j=1}^q \theta_j w_{t-j}
+$$
+
+Using the backshift operator and characteristic polynomials, we can rewrite this relationship as:
+
+$$
+\Phi(B)X_t = \Theta(B)w_t
+$$
+
+where
+
+$$
+\Phi(B) = \left( 1 + \sum_{i=1}^p\phi_i B^i \right)\\
+\Theta(B) = \left( 1 + \sum_{j=1}^q \theta_j B^j \right)
+$$
+
+## Invertibility
+
+Note that if $\Phi(B)$ and $\Theta(B)$ have a common factor $\eta(B)$ which is invertible, then we can cancel $\eta(B)$ from both sides and get a new representation:
+
+$$
+\Phi(B)X_t = \Theta(B)w_t \\
+\eta(B)\Phi'(B)X_t = \eta(B)\Theta'(B)w_t \\
+\Phi'(B)X_t = \Theta'(B)w_t
+$$
+
+There is an issue though: the polynomials $\Phi(B)$ and $\Theta(B)$ can have invertible common factors. For example, consider the following ARMA(1,1) process:
+
+$$
+X_t = \theta X_{t-1} + \theta w_{t-1} + w_t \qquad |\theta|<1
+$$
+
+This *looks* like an ARMA(1,1) process, but in reality $X_t$ is just white noise:
+
+$$
+\begin{align*}
+X_t &= \theta X_{t-1} - \theta w_{t-1} + w_t \\
+X_t - \theta X_{t-1} &= -\theta w_{t-1} + w_t \\
+X_t - \theta B X_t &= -\theta B w_t + w_t \\
+(1 - \theta B) X_t &= (1-\theta B)w_t \\
+X_t &= w_t
+\end{align*}
+$$
+
+I.e. the "ARMA(1,1)" process really just reduces down to an ARMA(0,0) process. So using the representation $\Phi(B)X_t = \Theta(B)w_t$ can make the process seem more complicated than it actually is. To get around this, we can rewrite $\Phi(B)X_t = \Theta(B)w_t$ as:
+
+$$
+w_t = \frac{\Phi(B)}{\Theta(B)}X_t
+$$
+
+By taking the quotient, the common factors automatically cancel out, leaving us with a "most reducted form". However, this representation is only valid if $\Theta(B)$ is invertible, i.e. if the MA(q) portion is an invertible process. For this reason we generally require that MA portion be invertible in the definition of an ARMA process.
+
+Assuming $\Theta(B)$ is invertible, we can then get a power series representation of the quotiented operator:
+
+$$
+w_t = \frac{\Phi(B)}{\Theta(B)}X_t = X_t + \sum_{j=1}^{\infty}\pi_jX_{t-j} \\
+\text{where} \qquad \sum_{j=1}^{\infty} |\pi_j| < \infty
+$$
+
+## Causality
+
+Similarly, there is an issue with causality: the ARMA process $X_t$ might not be causal. We thus require the additional constraint that the AR(p) portion of the ARMA process be a causal AR process.
+
+Note that if AR(p) is a causal process, then AR(p) is necessarily stationary. Since MA(q) processes are always stationary, this means that the ARMA(p,q) process is the sum of two stationary processes:
+
+$$
+X_t = w_t + \sum_{i=1}^p \phi_iX_{t-i} + \sum_{j = 1}^q \theta_jw_{t-j}
+$$
+
+Consequently, an ARMA(p,q) process must be stationary by the requirements in our definition.
+
+
+<br>
+
+---
+
+<br>
+
+# 5.2 Autoregressive Integrated Moving Average Processes (ARIMA)
+
+By definition ARMA(p,q) models have to be stationary, but almost always we will have data that isn't stationary. The most common example is a time series $X_t$ which is composed of a "trend" piece and a stationary piece:
+
+$$
+X_t = \mu_t + Y_t
+$$
+
+For example, consider the case of a linear trend:
+
+$$
+X_t = \beta_0 + \beta_1t + Y_t
+$$
+where $Y_t$ is a stationary process. In this case, we can actually recover a stationary time series by looking at the *first difference* of $X_t$:
+
+$$
+\begin{align*}
+\nabla X_t &= X_t - X_{t-1} \\
+&= (\beta_0 + B_1t + Y_t) - (\beta_0 + \beta_1(t-1) + Y_{t-1})\\
+&=\beta_1t + Y_t - \beta_1(t-1) - Y_{t-1} \\
+&= \beta_1 + (Y_t - Y_{t-1}) \\
+&= \beta_1 + \nabla Y_t
+\end{align*}
+$$
+
+From a forecasting perspective: knowing $X_{t-1}$ and $\nabla X_t$ is just as good as knowing $\X_t$ because $X_{t-1} + \nabla X_t = X_t$. In fact if we know $\nabla X_t$ for all time $t$, then from any starting point $X_0 = x_0$, we can forecast every future value by just integrating the first differences:
+
+$$
+X_t = X_0 + \sum_{j=1}^t \nabla X_j
+$$
+
+Therefore, it might be possible to model a non-stationary process if:
+
+1) The first difference (aka first derivative) is a stationary process
+2) We can model the first derivative with an ARMA(p,q) process
+
+In which case we can just integrate the first difference to recover the original time series. More generally, this isn't restricted to the first difference: if the $n$-th difference is stationary, we can model the $n$-difference, then integrate $n$-many times to recover the original series!
+
+This leads to the following generalization of the ARMA process: an **autoregressive integrated moving average process (ARIMA)** of order $(p, q, d)$ is a time series process where the $d$-th difference is an ARMA(p,q) process. We denote such a process by ARIMA(p, q, d). 
+
+Thus an ARIMA model is just a model where the $d$-derivative is stationary, so we fit an ARMA(p,q) model to the $d$-th derivative, then integrate to recover the original time series.
+
+<br>
+
+---
+
+<br>

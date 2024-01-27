@@ -1,0 +1,401 @@
+
+# 03 Unit Roots
+
+# Introduction
+
+As mentioned in the previous section, the `acf()` function returns estimates for the autocovariance (which tell us about the temporal structure of the time series). However, these estimates are only valid if the underlying data generation process is stationary. This leads to the question: are autoregressive processes stationary?
+
+The answer: **it depends**. Some AR(p) processes are stationary and some are not (even for a fixed order $p$). The way to tell which AR(p) processes are stationary (and which ones are not) is through something called a **unit root**: an autoregressive process $X_t = \sum_{j=1}^p \theta_j X_{t-j} + w_t$ which has a unit root *will not be stationary*.
+
+<br>
+
+---
+
+<br>
+
+# 3.1 The Backshift Operator And The Characteristic Polynomial
+
+## Definition
+
+For any time series process $X_t$, define the **backshift operator** $B$ as the function:
+
+$$
+BX_t = X_{t-1}
+$$
+
+We will write $B^kX_t = X_{t-k}$ to indicate multiple applications of the backshift operator.
+
+## Applications Of The Backshift Operator
+
+The backshift operator is useful because it helps us algebraically manipulat time series to potentially simply them. For example, consider the following time series process:
+
+$$
+X_t = \theta X_{t-1} - \theta w_{t-1} + w_t
+$$
+
+On the surface, this looks like a complicated time series process where an AR(1) and an MA(1) got mixed together. However, using the backshift operator, we can actually do some algrebraic clean-up to unmask the true process:
+
+$$
+\begin{align*}
+X_t &= \theta X_{t-1} - \theta w_{t-1} + w_t \\
+X_t &= \theta B X_t - \theta B w_t + w_t \\
+X_t - \theta B X_t &= w_t - \theta B w_t \\
+(1 - \theta B)X_t &= (1-\theta B) w_t \\
+X_t &= w_t
+\end{align*}
+$$
+
+In other words, our seemingly complicated process $X_t$ actually just ends up being white noise!
+
+In fact, what this example illustrates is that AR and MA processes are really just a system of (recursive) equations. These systems of equations may or may not have solutions 
+
+
+## Characteristic Polynomials
+
+The backshift operator is important because it allows us to represent an autoregressive process $X_t$ in terms of a polynomial function. Specifically, let $X_t$ be an AR(p) process $X_t = \sum_{i=1}^p \theta_iX_{t-i} + w_t$. Then:
+
+$$
+\begin{align*}
+X_t &= \sum_{i=1}^p\theta_iX_{t-i} + w_t \\
+X_t &= \sum_{i=1}^p\theta_iB^iX_t + w_t \\
+X_t - \sum_{i=1}^p\theta_iB^iX_t &= w_t \\
+\left(1 - \sum_{i=1}^p\theta_iB^i\right)X_t &= w_t \\
+(1 - \theta_1B - \theta_2B^2 - \ldots - \theta_pB^p) X_t &= w_t\\
+\Phi(B)X_t = w_t
+\end{align*}
+$$
+
+The right hand side is an polynomial in $B$, which is an operator being applied to $X_t$. We call the polynomial in $B$ the **autoregressive operator** and denote it by $\Phi(B)$:
+
+$$
+\Phi(B) = (1 - \theta_1B - \theta_2B^2 - \ldots - \theta_pB^p) = \left(1 - \sum_{i=1}^p\theta_iB^i\right)
+$$
+
+Finally, the **characteristic polynomial** is just the same polynomial $\Phi$ but treated as a polynomial over the complex numbers:
+
+$$
+\Phi(z) = (1 - \theta_1z - \theta_2z^2 - \ldots - \theta_pz^p)
+$$
+
+# 3.2 Reverse-Causality
+
+We saw before that a decaying AR(1) process is equivalent to an MA($\infty$), which means it can be written as a *causal linear process*. More specifically, let $X_t = \theta X_{t-1} + w_t$. If $|\theta|<1$, we can write:
+
+$$
+X_t = \sum_{i = 0}^{\infty}\theta^i w_{t-i}
+$$
+
+Representing $X_t$ as a geometric series allowed us to compute the autocovariance function. Consequently, we were able to determine that $X_t$ is weakly stationary when $|\theta|<1$. The next question that naturally comes up is: what happens when $|\theta| \geq 1 $?
+
+Well, when $|theta|=1$, we have a random walk which is not stationary. However, the case when $|\theta| > 1$ is very interesting; we can do something truly weird to get a mathematically correct answer.
+
+## Stationarity of Reverse Causal AR(1)
+
+As it turns out, when $|\theta| > 1$, we can still write this process in the form of a linear process, just that it now becomes **reverse-causal**:
+
+$$
+\begin{align*}
+X_{t+1} &= \theta X_t + w_{t+1}\\
+X_{t+1} - w_{t+1} &= \theta X_t \\
+\theta^{-1}X_{t+1} - \theta^{-1}w_{t+1} &= X_t \\
+X_t &= \theta^{-1}X_{t+1} - \theta^{-1}w_{t+1}
+\end{align*}
+$$
+
+This is "reverse-causal" because we are using future values $X_{t+1}$ to determine the current value $X_t$. NOTE: this is not technically the same time series process as the original $X_t = \theta X_{t-1} + w_t$, if not for the sheer fact that $X_t$ is no longer a function of the previous value $X_{t-1}$. Hueristically, think of this as the reverse of the original series.
+
+Anyways, if $|\theta| > 1$, then $|\theta^{-1}| < 1$ and we can use the same logic as in the decaying AR(1) case, but this time applied to $\theta^{-1}$. Specifically, just consider what happens as we recursively plug-in the definition of $X_{t+2}$, $X_{t+3}$, etc.
+
+$$
+\begin{align*}
+X_t &= \theta^{-1}X_{t+1} - \theta^{-1}w_{t+1} \\
+&= \theta^{-1}(\theta^{-1}X_{t+2} - \theta^{-1}w_{t+2}) - w_{t+1} \\
+&= \theta^{-2}X_{t+2} - \theta^{-1}w_{t+2} - w_{t+1} \\
+&= \theta^{-2}(\theta^{-1}X_{t+3} - \theta^{-1}w_{t+3}) - \theta^{-2}w_{t+2} - \theta^{-1}w_{t+1} \\
+&= \theta^{-3}X_{t+3} - \theta^{-3}w_{t+3} - \theta^{-2}w_{t+2} - \theta^{-1}w_{t+1}\\
+&= \ldots
+\end{align*}
+$$
+
+We can show (by induction) that for any integer $N$, we have:
+
+$$
+X_t = \theta^{-N}X_{t+N} - \sum_{i = 1}^N \theta^iw_{t+i}
+$$
+
+Then we take the limit as $N\to\infty$, with the key insight that $|\theta| > 1$ gives us $|\theta^{-1}| < 1$ so the limit will converge:
+
+$$
+X_t = -\sum_{i=1}^{\infty}\theta^i w_{t+i}
+$$
+
+Notice what this representation is saying: the value $X_t$ at time $t$ is determined by random shocks *in the future*, which is what makes this weird thing reverse-causal.
+
+However, since this sum converges, it is mathematically well-defined, so we can do something clever and compute the autocovariance function for $X_t$, using the reverse-causal infinite sum representation (just like we did in chapter 2 for the decaying AR(1) process):
+
+$$
+\begin{align*}
+K_X(s, t) &= \sigma^2 (\theta^{-1})^{|s-t|}\sum_{i = 1}^{\infty}(\theta^{-1})^{2i} \\
+&= \sigma^2 (\theta^{-1})^{|s-t|} \left( \frac{1}{1-(\theta^{-1})^2} - 1 \right) \\
+&= \sigma^2 (\theta^{-1})^{|s-t|} \frac{(\theta^{-1})^2}{1-(\theta^{-2})^2}\\
+&= \sigma^2 \theta^{-|s-t|}\frac{\theta^{-2}}{1-\theta^{-2}}
+\end{align*}
+$$
+
+Just like with the decaying AR(1), notice that the growing AR(1) *is weakly stationary*: the autocovariance function $K_X(s,t)$ does not actually depend on $s$ and $t$, but only on their difference $|s-t|$; furthermore the mean of the process $X_t$ is 0.
+
+
+## Quick Terminology
+
+Given an AR(1) process $X_t = \theta X_{t-1} + w_t$, we'll say:
+
+* $X_t$ is **causal** if $|\theta|<1$
+* $X_t$ is **reverse-causal** if $|\theta| > 1$
+* $X_t$ is a **random walk** if $|\theta| = 1$
+
+## Causal vs Reverse-Causal Equivalence In Gaussian AR(1)
+
+Given an AR(1) process $X_t = \theta X_{t-1} + w_t$ where $w_t$ is i.i.d normal, we have $X_t$ is a Gaussian process (GP). For Gaussian processes, we can do something even more diabolical and show an even weirder result: for any reverse-causal AR(1) Gaussian process, we can *always* cook up a causal AR(1) Gaussian process which is *stochastically equivalent*.
+
+So let's suppose we have a *reverse-causal* Gaussian process $X_t = \theta X_{t-1} + w_t$; this means $|\theta| > 1$. In particular:
+
+1) $X_{t-1}$ has mean 0
+2) $K_X(h) = \sigma^2 \theta^{-|h|}\frac{\theta^{-2}}{1-\theta^{-2}}$
+
+Note that a GP is completely determined by its mean and autocovariance; *any* other GP which has the same mean and autocovariance function will be equivalent to $X_t$.
+
+Now, define a *new* Gaussian process:
+
+$$
+Y_t = \theta^{-1}Y_{t-1} + v_t
+$$
+
+where $v_t$ is i.i.d normal with mean 0 and variance $Var[v_t] = \sigma^2\theta^{-2}$. Since $|\theta| > 1$, this means $|\theta | <  1$, so $Y_t$ is a causal AR(1) process with mean 0.
+
+Recall that for any causal AR(1) process $Z_t = \phi Z_{t-1} + s_t$, we computed its autocovaraince function as just:
+
+$$
+K_Z(h) = \tau^2\phi^{|h|}\frac{1}{1 - \phi^2}
+$$
+where $\tau^2$ is the variance of the noise term $s_t$. Therefore, if we plug-in $Y_t$ into this formula:
+
+$$
+K_Y(h) = \sigma^2\theta^{-2}\theta^{-|h|}\frac{1}{1-\theta^{-2}}
+$$
+
+In particular, both $X_t$ and $Y_t$ have mean 0 *and* they have the same autocovariance function. Since $X_t$ and $Y_t$ are both GPs, this means they are equivalent as stochastic processes! In other words, the following two model specifications define the same data generation process:
+
+1) $X_t = \theta X_{t-1} + w_t$ where $|\theta| > 1$ and $w_t \sim N(0, \sigma^2)$
+2) $Y_t = \theta^{-1}Y_{t-1} + v_t$ where $|\theta|^{-1} < 1$ and $v_t \sim N(0, \sigma^2\theta^{-2})$
+
+This leads to a very big problem: if we did some kind of regression to estimate the parameter $\theta$, how do we know we are getting $\theta$ and not $\theta^{-1}$. This is called the **problem of identifiability**. What this really means is that: just stating that the time series is a Gaussian AR(1) *is not enough* to determine the actual model; we need to add an additional constraint that the stipulates our model has to be causal. 
+
+In other words, we have to make the judicial decision to *purge* the reverse-causal solution from the solution space. Explicitly, this means we have refine the definition of an AR(p) process: an **AR(p) process** is a process $X_t$ such that
+
+1) $X_t = \sum_{i=1}^p \theta_iX_{t-i} + w_t$ where the $w_t$ is white noise
+2) $Cov(X_t, w_{t+1}) = 0$
+
+## Contradiction Of Reverse Causality
+
+Ultimately, we have to reverse causality
+
+
+<br>
+
+---
+
+<br>
+
+# 3.3 Weak Stationarity of AR(p)
+
+So the previous section showed the following: for an AR(1) process $X_t = \theta X_{t-1} + w_t$ we have:
+
+1) $X_t$ is weakly stationary when $|\theta| < 1$
+2) $X_t$ is not weakly stationary when $|\theta|=1$; a random walk is not weakly stationary
+3) $X_t$ is technically weakly stationary when $|\theta| > 1$, but only if we permit a non-causal representation of $X_t$. Since we are purging non-causal representations from our universe, $X_t$ is no longer weakly stationary.
+
+Notice that $|\theta| = 1$ acts as a problematic edge case and this phenomena holds true for higher order AR(p) processes. To show this, we follow the same strategy as the AR(1) case: try to represent an AR(p) process as a linear process (infinite sum), which we know is weakly stationary.
+
+Suppose $X_t$ is an AR(p) process $X_t = \sum_{i = 1}^p \theta_iX_{t-i} + w_t$. Recall the backshift operator $B$, which is just defined to the operator $BX_t = X_{t-1}$. We can use the backshift operator to reformulat the AR(p) process as:
+
+$$
+\Phi(B)X_t = w_t
+$$
+
+where $\Phi(B) = \left(1 - \sum_{i=1}^p\theta_iB^i\right)$. What we would like to do is invert the operator on the left to get:
+
+$$
+X_t = \Phi^{-1}(B)w_t
+$$
+
+However, it's unclear whether this operator is invertible. Consider for a moment, the characteristic characteristic polynomial, i.e. the same polynomial $\Phi$ but viewed over the complex numbers:
+
+$$
+\begin{align*}
+\Phi(z) &= \left(1 - \sum_{i=1}^p\theta_iz^i\right)\\
+&= (1 - \theta_1z - \theta_2z^2 - \ldots - \theta_pz^p)\\
+\end{align*}
+$$
+
+Note that over the complex plan $\mathbb{C}$, this polynomial factors completely (this is just the fundamental theorem of algebra):
+
+$$
+\begin{align*}
+\Phi(z) &= 1 - \theta_1z - \theta_2z^2 - \ldots - \theta_pz^p \\
+&= \theta_p (z-r_1)\ldots(z-r_p)
+\end{align*}
+$$
+
+Note that the constant term in the polynomial is 1, so the leading coefficient and the roots must multiply to $\pm 1$:
+
+$$
+1 = (-1)^p\theta_p \cdot r_1 \cdot \ldots \cdot r_p
+$$
+So we can thus write:
+
+$$
+\begin{align*}
+\Phi^{-1}(z) &= \frac{1}{\Phi(z)} \\
+&= \frac{1}{\theta_p (z-r_1)\ldots(z-r_p)} \\
+&= \frac{1}{(-1)^p\theta_p(r_1\ldots r_p)(1 - r_1^{-1}z)\ldots(1-r_p^{-1}z)} \\
+&= \frac{1}{(1 - r_1^{-1}z)\ldots(1-r_p^{-1}z)} \\
+&= \frac{1}{1-r_1^{-1}z} \ldots \frac{1}{1-r_p^{-1}z} \\
+\end{align*}
+$$
+
+Here is where the big breakthrough occurs: if every one of the roots $|r_i| > 1$, then every $|r_i^{-1}| < 1$ and we can therefore represent each of the factors as a geometric series:
+
+$$
+\begin{align*}
+\Phi^{-1}(z) &= \frac{1}{1-r_1^{-1}z} \ldots \frac{1}{1-r_p^{-1}z} \\
+&= \left(\sum_{j_1=0}^{\infty}r_1^{-j_1}z^{j_1}\right)\ldots \left( \sum_{j_p=0}^{\infty} r_p^{-j_p}z^{j_p}\right)\\
+&= \prod_{i=1}^p\left(1 + \sum_{j_i = 1}^{\infty}r_i^{-j_i}z^{j_i}\right)
+\end{align*}
+$$
+
+Finally, bringing this back to our AR(p) process $X_t = \sum_{i=1}^p\theta_iX_{t-i} + w_t$, we can write:
+
+$$
+\begin{align*}
+X_t &= \sum_{i=1}^p\theta_iX_{t-i} + w_t\\
+\Phi(B)X_t &= w_t \\
+X_t &= \Phi^{-1}(B)w_t \\
+X_t &=  \prod_{i=1}^p\left(1 + \sum_{j_i = 0}^{\infty}r_i^{-j_i}B^{j_i}\right)w_t
+\end{align*}
+$$
+
+The right hand side is just a product of $p$-many geometric series, so the result will be infinite series starting at degree 0:
+
+$$
+X_t = \prod_{i=1}^p\left(1 + \sum_{j_i = 0}^{\infty}r_i^{-j_i}B^{j_i}\right)w_t = \sum_{j = 0}^{\infty}a_jB^jw_t
+$$
+
+Therefore: if the roots of $r_1,\ldots,r_p$ of the characteristic polynomial $\Phi(z)$ are all *outside* of the unit circle $|r_i| > 1$, then the the AR(p) process $X_t$ is a causal linear process, hence it is stationary! Thus, if we know that $X_t$ has roots outside the unit circle, we also know that $X_t$ will be stationary. In fact, this is an if and only if relationship.
+
+A **unit root** for the time series $X_t$ is a complex root $r$ for the characteristic polynomial $\Phi(z)$ such that $|r| = 1$. In other words, if a unit root is a root $r$ that lies on the unit circle. If $X_t$ has a unit root, then $X_t$ will not be stationary. Consequently, this gives us a way to test for stationarity by testing for the existence of a unit root (e.g. Dickey-Fuller Test).
+
+<br>
+
+---
+
+<br>
+
+# 3.4 Invertibility Of MA(q)
+
+Non-causal AR(p) processes lead to non-unique solutions for stationary AR(p) models. There is an analogous issue with MA(q) models regarding *invertibility*. Recall that an MA(q) model is a time series $X_t$ defined by:
+
+$$
+X_t = w_t + \sum_{j=1}^q \theta_jw_{t-j}
+$$
+
+Observe that we can rewrite this in terms of the backshift operator:
+
+$$
+\begin{align*}
+X_t &= w_t + \sum_{j=1}^q \theta_j B^jw_t \\
+X_t &= \left(1 + \sum_{j=1}^q \theta_jB^j\right) w_t \\
+X_t &= \Theta(B)w_t
+\end{align*}
+$$
+
+Where $\Theta(B) = 1 + \sum_{j=1}^q \theta_jB^j$ is called the **moving average operator**. 
+
+A moving average process MA(q) is called **invertible** if it's moving average operator is invertible. That is, $\Theta^{-1}(B)$ exists, in which case we can write:
+
+$$
+w_t = \Theta^{-1}(B)X_t
+$$
+
+Note that if $\Theta^{-1}(B)$ exists, we can express it as an infinite power series. Intuitively, this means that an MA(q) process is invertible if $w_t$ can be written as an infinite AR causal process. Note further that, just like the AR(p) process, $\Theta^{-1}(B)$ is invertible precisely when the roots to its characterstic polynomial $\Theta^{-1}(z)$ have modulus $|r| > 1$.
+
+To illustrate why we need to consider invertibility, let's consider the simple Gaussian MA process: $X_t = w_t + \theta w_{t-1}$ where $w_t \sim N(0, \sigma^2)$ for all $t$. The mean of this process is 0 and the autocovariance is:
+
+$$
+K_X(h) = \begin{cases}
+(1+\theta^2)\sigma^2 & h = 0\\
+\theta\sigma^2 & h = 1\\
+0 & h \geq 2
+\end{cases}
+$$
+
+Now, we can define a stochastically equivalent process: $Y_t = v_t + \theta^{-1}v_{t-1}$ where $v_t \sim N(0, \theta^2\sigma^2)$. This process will also have mean 0 and also have:
+
+$$
+K_Y(h) \begin{cases}
+(1 + \theta^{-2})\theta^2\sigma^2 & h = 0\\
+\theta^{-1}\theta^2\sigma^2 & h = 1 \\
+0 & h\geq 2
+\end{cases}
+$$
+
+Notice that after simplifying all the terms, $K_Y(h) = K_X(h)$. Since Gaussian processes are determiend by their mean and autocovariance, both $X_t$ and $Y_t$ must be equivalent processes.
+
+We need to purge one of these solutions from solution space, so we choose to keep the one that is **invertible**. Specifically, an MA(q) process is invertible if the operator $\theta(B)$ is invertible.
+
+$$
+\begin{align*}
+X_t &= w_t + \theta w_{t-1} \\
+w_t &= X_t - \theta w_{t-1} \\
+\end{align*}
+$$
+
+We can then recursively plug-in this definition for $w_{t-1}$, $w_{t-2}$, etc. and get:
+
+$$
+\begin{align*}
+w_t &= X_t - \theta w_{t-1} \\
+w_t &= X_t - \theta(X_{t-1} - \theta w_{t-2})\\
+w_t &= X_t - \theta X_{t-1} + \theta^2 w_{t-2} \\
+w_t &= X_t - \theta X_{t-1} + \theta^2(X_{t-3} - \theta w_{t-3}) \\
+w_t &= X_t - \theta X_{t-1} + \theta^2X_{t-3} - \theta^3 w_{t-3}\\
+w_t &= \ldots
+\end{align*}
+$$
+
+This allows us to write:
+
+$$
+w_t = \sum_{i = 0}^{\infty}(-1)^i\theta^iX_{t-i}
+$$
+
+Notice that $w_t$ is defined in terms of past values $X_{t-i}$, which makes it causal. Similarly, for the equivalent process $Y_t$, we have:
+
+$$
+v_t = \sum_{i=0}^{\infty}(-1)^i\theta^{-i}Y_{t-i}
+$$
+
+Now:
+
+* If $|\theta| < 1$, then the first representation $w_t = \sum_{i = 0}^{\infty}(-1)^i\theta^iX_{t-i}$ will converge but the second representation  $v_t = \sum_{i=0}^{\infty}(-1)^i\theta^{-i}Y_{t-i}$ will not converge.
+
+* If $|\theta| > 1$, then the second representation  $v_t = \sum_{i=0}^{\infty}(-1)^i\theta^{-i}Y_{t-i}$ will converge but the first representation $w_t = \sum_{i = 0}^{\infty}(-1)^i\theta^iX_{t-i}$ will not converge.
+
+* If $|\theta| = 1$, then neither series are convergent (in fact, they coincide and become the same series).
+
+Thus, there is only ever at most 1 convergent representation, which is precisely going to be the invertible one.
+
+<br>
+
+---
+
+<br>

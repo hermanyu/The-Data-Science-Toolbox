@@ -1,0 +1,215 @@
+
+# 04 Linear Regression
+
+```{r}
+SEED <- 1738
+
+library(fpp3)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(scales)
+```
+
+
+# Introduction
+
+# 4.1 Classical Linear Regression
+
+Suppose a we have a set of time series processe $Y_t$ and $X_{1,t}, X_{2, t},\ldots, X_{p,t}$, such that:
+
+$$
+\begin{align*}
+Y_t &= \beta_0 + \beta_1X_{1,t} + \ldots + \beta_pX_{p,t} + \epsilon_t \\
+Y &= X\beta + \epsilon
+\end{align*}
+$$
+
+
+Given a set of data points $(y_t, x_{1,t},\ldots, x_{p,t})_{t=1}^T$, we can compute the least squares estimator $\hat{\beta}$, which has a closed form expression:
+
+$$
+\hat{\beta} = (x^Tx)^{-1}x^Ty
+$$
+
+
+As it turns out, this estimator $\hat{\beta}$ is BLUE (best linear unbiased estimator), if we make the following assumptions:
+
+0) $Y_t = \beta_0 + \beta_1X_{1,t} + \ldots + \beta_pX_{p,t} + \epsilon_t$
+1) The noise terms $\epsilon_t$ are i.i.d
+2) The noise terms $\epsilon_t$ have mean 0
+3) The noise terms $\epsilon_t$ are uncorrelated with the predictors 
+
+Here, "best" means the sample statistic $\hat{\beta}$ will have minimal sampling variance amongst all linear unbiased estimators. This result is called the Gauss-Markov Theorem.
+
+Notice that for the classical linear regression model, $Y_t$ depends on time *only through* the regressors $X_{i,t}$. In other words, $Y_t|t, X_{1,t} = Y_t|X_{1,t}$, so knowing the values of the regressors $X_{i,t}$ is just as good as knowing the time $t$ when it comes to predicting $Y_t$. If this is indeed the case, then classical linear regression can used to still get BLUE estimators.
+
+
+```{r}
+# Example: a data generation process where involving time series
+#   y_t = 2x_t + epsilon_t
+#   epsilon_t ~ N(0, 10) i.i.d
+sample_size = 100
+set.seed(SEED)
+
+t <- seq(1, sample_size)
+x_t <- rnorm(t, mean = 50 + 0.5*t, sd = 20)
+epsilon_t <- rnorm(t, mean = 0, sd = 10)
+
+y_t <- 2*x_t + epsilon_t
+
+df_ex1 <- tibble(
+  time = t,
+  x = x_t,
+  y = y_t
+) 
+
+df_ex1 %>% 
+  ggplot(aes(time,y)) + 
+  geom_line() + 
+  ylim(0, 300) + 
+  labs(title="Variable Y Across Time")
+```
+
+Notice that $y$ is technically a time series, and $y$  is clearly trending up, so there $y$ exhibits a dependency on time. But in reality, $y$ is just a scaled up version of $x$:
+
+```{r}
+df_ex1 %>% 
+  pivot_longer(
+    cols = -c(time),
+    names_to = "series",
+    values_to = "value"
+  ) %>% 
+  ggplot(aes(time, value, color = series)) + 
+  geom_line()
+```
+
+So the observed trend in $y$ is really just a result of the predictors $x$ trending up. If we use $x$ as a predictor in a linear regression, this will remove any time dependency in the response $y$. In other words: $x$ is a confoundter between the response variable $y$ and the time variable $t$; controlling for the confounder $x$ will close the causal backdoor and eliminate the impact of time $t$ on response $y$:
+
+```{r}
+example1.lm <- lm(
+  y ~ x,
+  data = df_ex1
+)
+
+summary(example1.lm)
+```
+
+```{r}
+# since y_t = 2x_t + epsilon_t with epsilon i.i.d gaussian
+# the residuals of the regression should jut be Gaussian white noise;
+# any dependencies/correlations across time should be completely removed
+tibble(
+  time = t,
+  residual = example1.lm$residuals
+) %>% 
+  ggplot(aes(time, residual)) + 
+  geom_line()
+```
+
+After removing the influence of $x$ on $y$, there is no more dependency between $y$ and time; we just have white noise.
+
+
+<br>
+
+---
+
+<br>
+
+# 4.2 Deterministic And Stationary Decomposition Model
+
+The big issue with time series data is that the error terms might be correlated across time. Therefore, when modeling time series, we generally want to think of the time series $X_t$ as being composed of two pieces:
+
+$$
+X_t = \mu_t + Y_t
+$$
+
+where $\mu_t = f(Z_t)$ is a deterministic process and $Y_t$ is a stationary time series. The idea is that we can use predictors to extract the "trend" component $\mu_t$; de-trending the time series should also make the whole thing stationary, so what's left over should just be a stationary piece $Y_t$. We can then use time series analysis to handle $Y_t$.
+
+```{r}
+# the us_change data set contains percent changes
+# in economic variables in the US
+us_change %>% 
+  select(Quarter, Income, Consumption) %>% 
+  pivot_longer(
+    cols = -c(Quarter),
+    names_to = "Series",
+    values_to = "value"
+  ) %>% 
+  ggplot(aes(Quarter, value, color = Series)) + 
+  geom_line()
+```
+
+We see that Consumption and Income are generally correlated across time: when Income trends up, Consumption tends to trend up. Conversely when Income trends down, consumption tends to trend down. This leads us to posit that:
+
+$$
+\text{Consumption}_t = (\beta_0 + \beta_1\text{Income}_t) + Y_t
+$$
+
+Let's try and regress Consumption on Income, using ordinary least squares:
+
+```{r}
+consumption.lm <- lm(
+  Consumption ~ Income,
+  data = us_change
+)
+
+summary(consumption.lm)
+```
+
+The least squares estimator returns an estimate of $\mu_t = 0.54 + 0.27 \text{Income}_t$ for the determinstic piece. 
+
+```{r}
+us_change %>% 
+  mutate(
+    pred_Consumption = consumption.lm$coef["(Intercept)"] + consumption.lm$coef["Income"] * Income
+  ) %>% 
+  select(Quarter, Consumption, pred_Consumption) %>% 
+  pivot_longer(
+    cols = -c(Quarter),
+    names_to = "Series",
+    values_to = "value"
+  ) %>% 
+  ggplot(aes(Quarter, value, color = Series)) + 
+  geom_line()
+```
+
+If we remove the predicted deterministic piece from Consumption, we get:
+
+```{r}
+us_change %>% 
+  mutate(
+    pred_Consumption = consumption.lm$coef["(Intercept)"] + consumption.lm$coef["Income"] * Income,
+    Y = Consumption - pred_Consumption
+  ) %>% 
+  select(Quarter, Y) %>% 
+  ggplot(aes(Quarter, Y)) + 
+  geom_line()
+```
+
+We observe that large shocks do not seem to persist very long; the series generally gravitates back to mean 0. We can investigate this idea further by looking at the ACF plots of the residual series:
+
+```{r}
+us_change %>% 
+  mutate(
+    pred_Consumption = consumption.lm$coef["(Intercept)"] + consumption.lm$coef["Income"] * Income,
+    Y = Consumption - pred_Consumption
+  ) %>% 
+  pull(Y) %>% 
+  acf()
+```
+
+There do not seem to be large correlations in lags, which indicates that random shocks tend to die off relatively quickly. We can test for stationarity using the augmented Dickey-Fuller test. The null hypothesis is that the series has a unit root $|r| = 1$; the alternative hypothesis is that all roots are bigger than 1:
+
+```{r}
+us_change %>% 
+  mutate(
+    pred_Consumption = consumption.lm$coef["(Intercept)"] + consumption.lm$coef["Income"] * Income,
+    Y = Consumption - pred_Consumption
+  ) %>% 
+  pull(Y) %>% 
+  tseries::adf.test()
+```
+
+Thus, we have pretty good evidence to suggest that the residual time series is stationary.
+

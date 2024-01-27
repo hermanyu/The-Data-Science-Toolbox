@@ -1,0 +1,614 @@
+
+# 01 Types Of Time Series
+
+```{r, message=FALSE, warning=FALSE}
+options(scipen = 999)
+ROOT <- rprojroot::find_rstudio_root_file()
+
+SEED <- 1738
+
+library(dplyr)
+library(ggplot2)
+```
+
+
+<br>
+
+---
+
+<br>
+
+# Introduction
+
+We need to be very careful here and state outright the formal definition of a time series: a **time series process** is a sequence of random variables $(X_t)_{t\in \mathbb{Z}}$ indexed by integers. This definition seems innocent enough, but the true complexity of a time series process comes from the fact that the variables $X_t$ *are almost never* i.i.d. 
+
+For example, consider the daily stock price $P_t$ of some company. Let $P_1$ be the stock price on the day of the IPO; then the sequence of random variables $(P_1, P_2,\ldots,P_t,\ldots)$ forms a time series process. However, these random variables are *not* i.i.d. because:
+
+1) Time data is almost always correlated: if the price of a stock is high at time $t$, then the stock price will likely be high at time $t+1$ as well.
+
+2) Time data is almost never identically distributed: if we know the current stock price $P_t$, it's a lot easier to predict the price $P_{t+1}$ for *tomorrow* than it is to predict the price $P_{t+100}$ *100 days from now*.
+
+To really drill home the point, think about what the *outcome space* is: for a sequence of random variables $(X_t)_{t\in \mathbb{Z}}$, a *single outcome* is a sequence of values: $(x_t)_{t\in \mathbb{Z}}$. This means that a single time series "data set" is really just *one single observation* from the entire outcome space. Intuitively, there are infinitely many possible paths; the time series data we observe is *just one* of these paths.
+
+In basic statistics, a simple random sample is also just a (finite) sequence of random variables $(X_i)_{i=1}^n$ but where the $X_i$ are i.i.d, $X_i = X$ for all $i$. This allows us to talk about single parameters like "the mean" of $X$ and "the variance" of $X$.
+
+In time series data, the $X_t$ are almost never i.i.d. So now it no longer makes sense to talk about "the mean" of $X$ since there is no single $X$ to talk about! Instead, we have to talk about a "mean function" which gives the mean of each $X_t$ at time $t$:
+
+$$
+E[(X_t)_{t\in \mathbb{Z}}] = \mu(t)
+$$
+
+Similarly, we have to talk about a "variance function" which gives the variance of each $X_t$ at time $t$:
+
+$$
+Var[(X_t)_{t\in\mathbb{Z}}] = \sigma^2(t)
+$$
+
+Notice that there is a fundamental incompatibility between a time series data set and the statistical theory of simple random samples: if we wanted to estimate the mean function $\mu(t)$ we would need to draw a *sample of time series*. This is generally not possible for real world data because we can't travel back in time and re-observe the same process more than once.
+
+So what can we do? If the random variables $(X_t)_{t\in \mathbb{Z}}$ were allowed to be anything and have an unconstrained complexity in their structure, then there's not much that we can do. But in the real world, actual processes are not just arbitrary: real world time series data generally have very specific structural patterns to them. The central idea behind time series analysis is to focus on these common structural patterns and develop ways to model them.
+
+
+<br>
+
+---
+
+<br>
+
+
+# 1.1 White Noise Processes
+
+The "simplest" kind of time series is **white noise**, denoted as $w_t$, which is random noise that has no **causality** (i.e. past values have no affect on future values):
+
+$$
+\begin{align*}
+E[w_t] &= 0 & \text{for all } t\\
+Var(w_t) &= \sigma^2 & \text{for all } t \\
+Cov(w_t, w_s) &= 0 & \text{for all } t\neq s\\
+\end{align*}
+$$
+
+The stipulation that $Cov(w_t,w_s) = 0$ means that individual data points have no (linear) correlations across time; in other words $w_t$ has no impact on $w_{t+1}$, $w_{t+2}$, etc.
+
+Intuitively, white noise is a time series where each point in time is "kind of" i.i.d; we say "kind of" because
+
+1) $Cov(w_t,w_s)$ is a weaker condition than independence
+2) $E[w_t] = 0$ and $Var(w_t) = \sigma^2$ is a weaker condition than identical distributions for for all $w_t$
+
+White noise comes in a few flavors depending on how well-behaved it is:
+
+* If $w_t$ happens to be i.i.d for all $t$, then we say $w_t$ is **i.i.d white noise**.
+* If $w_t$ is i.i.d *and* normally distributed $w_t \sim N(0, \sigma^2)$, then we say $w_t$ is **Gaussian white noise**.
+
+```{r}
+# Example of Gaussian white noise: each noise term w_t ~ Normal(0, 5) for all t
+set.seed(SEED)
+vec_time <- seq(0, 100)
+vec_values <- rnorm(vec_time, mean = 0, sd = 5)
+
+tibble(
+  time = vec_time,
+  value = vec_values
+) %>% 
+  ggplot(aes(time, value)) + 
+  geom_line() + 
+  labs(title = "Gaussian White Noise")
+```
+
+<br>
+
+---
+
+<br>
+
+
+# 1.2 Autoregressive Processes
+
+An **autoregressive process of order $p$**, denoted $AR(p)$, is a time series where the current value $X_t$ is determined by a linear combination of the $p$-most recent past values plus a white noise term:
+
+$$
+X_t = \sum_{i = 1}^p \theta_iX_{t-i} + w_t
+$$
+
+
+Intuitively, an autoregressive process is one where the current value is a weighted average of the most recent values plus some randomness.
+
+We should appreciate the subletly here: the error terms $w_t$ are uncorrelated, meaning the shocks are occur independently from each other. *However* each error term $w_t$ *does propagate* to future values of $X_{t+1}$, $X_{t+2}$, etc. 
+
+For example, let's consider the most simple example of $AR(1)$ (an autoregressive process of order 1):
+
+$$
+X_t = \theta X_{t-1} + w_t \\
+w_t \sim N(0, \sigma^2) \,\,\,\, \forall t
+$$
+
+Then:
+
+$$
+\begin{align*}
+X_2 &= \theta X_1 + w_2 \\
+X_3 &= \theta X_2 + w_3 = \theta^2 X_1 + \theta w_2 + w_3 \\
+\vdots\\
+X_t &= X_{t-1} + w_t = \theta^{t-1} X_1 + \theta^{t-2}w_2 + \theta^{t-3}w_3 + \ldots + w_t\\
+\vdots \\
+\end{align*}
+$$
+
+In other words, the value at $X_t$ is completely determined by all the previous random noise $w_1,\ldots,w_{t-1}$; this is how the random. More generally, an autoregressive process is a time series where the random shocks at time $t$ propagate infinitely into the future. The intensity of the propagation is controlled by $\theta$:
+
+* If $\theta < 1$, then the effect of the random shock decays to 0 over time
+* If $\theta > 1$, then the effect of the shock ramps up over time (e.g. a feedback loop)
+
+A special case is when $\theta=1$, in which case we just get:
+
+$$
+X_t = X_{t-1} + w_t = X_1 + w_2 + \ldots + w_t
+$$
+
+This is called a **random walk** because the value of $X_t$ is just the culmination of a random starting point $X_1$ and a bunch of random steps $w_i$.
+
+## Example: Random Walks
+
+A **random walk** is an autoregressive process $X_t$ of the form:
+
+$$
+X_t = X_{t-1} + w_t
+$$
+
+Intuitively, a random walk is just a time series which is at some position $X_{t-1}$, random chooses a direction $w_t$, then moves in that direction to get to $X_t$.
+
+```{r}
+# example of a random walk
+set.seed(SEED)
+vec_time <- seq(1, 100)
+vec_directions <- rnorm(vec_time, mean = 0, sd = 2)
+vec_X <- cumsum( vec_directions )
+
+tibble(
+  time = vec_time,
+  value = vec_X
+) %>% 
+  ggplot(aes(time, value)) + 
+  geom_line()
+```
+
+
+## Example: Synthetically Generated Data
+
+```{r}
+# this function takes a time series (given as a vector)
+# and computes the next autoregressive term in an AR(p) process
+compute_next_ar_term <- function(ar_series, weights){
+  
+  p <- length(weights) # order of the AR process; inferred from the number of weight supplied
+  end_index <- length(ar_series)
+  start_index <- end_index - p + 1
+  next_value <- sum( ar_series[ start_index : end_index] * weights )
+  
+  return(next_value)
+}
+
+# This function generates an autoregressive time series of order p;
+# the order p is inferred from the number of weights supplied
+generate_ar_series <- function(series_length = 100, weights = c(1), error_sd = 1, seed = NULL){
+  
+  if (!is.null(seed)){
+    set.seed(seed)
+  }
+  
+  p <- length(weights)
+  
+  ar_series <- rnorm(p, mean = 0, sd = error_sd) # starting points
+  # print(paste0("starting at: ", ar_series))
+  
+  for (i in (p+1) : series_length){
+    next_value <- compute_next_ar_term(ar_series, weights)
+    error_value <- rnorm(1, mean = 0, sd = 1)
+    # print(paste0("Next AR term: ", next_value))
+    # print(paste0("Next Error term: ", error_value))
+    # print(paste0("Next value of series ", next_value + error_value))
+    
+    ar_series <- c(ar_series, next_value + error_value)
+  }
+  
+  return(ar_series)
+}
+
+```
+
+
+```{r}
+vec_time <- seq(1, 100, by = 1)
+
+df_ar_example <- tibble(
+  time = vec_time,
+  AR1_random_walk = generate_ar_series(series_length = 100, weights = c(1), seed = SEED),
+  AR1_weight_05 = generate_ar_series(series_length = 100, weights = c(0.5), seed = SEED),
+  AR2 = generate_ar_series(series_length = 100, weights = c(0.5, 0.5), seed = SEED),
+  AR3 = generate_ar_series(series_length = 100, weights = c(0.2, 0.2, 0.4), seed = SEED)
+)
+```
+
+```{r}
+df_ar_example%>% 
+  tidyr::pivot_longer(
+    cols = -c(time),
+    names_to = "series",
+    values_to = "value"
+  ) %>%
+  ggplot(aes(time, value)) + 
+  geom_line() + 
+  facet_wrap(~series, ncol = 2, scales = "free_y")
+```
+
+
+<br>
+
+---
+
+<br>
+
+# 1.3 Moveing Average (MA) Processes
+
+## Motivating Thought Experiment
+
+As a thought experiment to motivate this section, imagine a singer recording a song in a studio. Her voice (aka the "signal") is recorded as a series of numbers across different points in time:
+
+```{r}
+vec_time <- seq(0, 50, by = 1)
+vec_values <- 0.25*sin(0.5*vec_time) + 0.6*sin(0.25*vec_time) + 1.5
+
+tibble(
+  time = vec_time,
+  value = vec_values
+) %>% 
+  ggplot(aes(time, value)) + 
+  geom_point() + 
+  geom_line() + 
+  labs(title = "Singer's Voice")
+```
+
+Of course, the singer is human, so they will need to breath in-between verses. The act of breathing introduces a new sound at the time point $t=20$:
+
+```{r}
+tibble(
+  time = vec_time,
+  value = vec_values
+) %>% 
+  mutate(
+    value = ifelse(time == 20, value + 0.5, value)
+  ) %>% 
+  ggplot(aes(time, value)) + 
+  geom_point() + 
+  geom_line() + 
+  labs(title = "Singer's Voice + Breath")
+```
+
+Now, soundwaves will bounce off of hard surfaces, so the breathing sound at time $t=20$ will bounce off a glass window and return to the mic at time $t=22$ at half intensity
+
+```{r}
+tibble(
+  time = vec_time,
+  value = vec_values
+) %>% 
+  mutate(
+    value = ifelse(time == 20, value + 0.5, value),
+    value = ifelse(time == 22, value + 0.25, value)
+  ) %>% 
+  ggplot(aes(time, value)) + 
+  geom_point() + 
+  geom_line() + 
+  labs(title = "Singer's Voice + Breath")
+```
+
+In this example, a random noise at time $t=20$ has a carryover effect and shows up again as random noise at $t=21$. This reverberation into the future is called **causality**, i.e. values in the past "cause" values in the future.
+
+Now of course, at time $t=21$, the singer might also nonchalantly scratch their noise. This will cause another sound occur at time $t=21$ *in addition* to the carryover affect from before:
+
+```{r}
+tibble(
+  time = vec_time,
+  value = vec_values
+) %>% 
+  mutate(
+    value = ifelse(time == 20, value + 0.5, value),
+    value = ifelse(time == 22, value + 0.25, value),
+    value = ifelse(time == 22, value + 0.1, value)
+  ) %>% 
+  ggplot(aes(time, value)) + 
+  geom_point() + 
+  geom_line() + 
+  labs(title = "Singer's Voice + Breath")
+```
+
+So altogether, we can think of this time series as being made up of 3 parts:
+
+$$
+\text{Recording}_t = \text{Voice}_t + \text{Carryover Noise}_t + \text{Noise}_t
+$$
+The voice is the signal, the carryover (aka causality) is the residual impact from a previous shock, and the noise term is the impact of a current shock.
+
+## Moving Average Model
+
+A **moving average process of order $q$**, denoted $MA(q)$, is time series of the form:
+
+$$
+X_t = \sum_{j=1}^q \phi_jw_{t-j} + w_t
+$$
+
+where $w_j$ is white noise. In other words, a moving average process (of order $q$) is a process where the random noise at time $t$ propagates $q$ steps in the future. The intensity of the propagation is controlled by the coefficients $\phi_j$. In the example  of recording a singer's voice: $\phi_j < 1$ means the random noise gets quieter over time, while $\phi_j > 1$ means there is a feedback loop and the noise gets stronger.
+
+
+## Examples: Synthetic Data
+
+```{r}
+compute_next_ma_term <- function(noise_series, weights, end_index){
+  q <- length(weights)
+  start_index <- end_index - q + 1
+  next_value <- sum( noise_series[ start_index : end_index ] * weights )
+  
+  return(next_value)
+}
+
+generate_ma_series <- function(series_length = 100, weights = c(1), error_sd = 1, seed = NULL){
+  
+  q <- length(weights)
+  
+  noise_series <- rnorm(series_length + q, mean = 0, sd = error_sd)
+  
+  ma_series <- rep(NA, q)
+  start_index <- q + 1
+  
+  # print("Noise: ")
+  # print(noise_series)
+  # print("------")
+  
+  for (i in start_index : series_length){
+    next_value <- compute_next_ma_term(noise_series, weights, i - 1)
+    error_term <- noise_series[i]
+    
+    # print(paste0("Next MA term: ", next_value, " , Error term: ", error_term))
+    # print(paste0("Next term: ", next_value + error_term))
+    
+    ma_series <- c(ma_series, next_value + error_term)
+    
+  }
+  
+  return(ma_series)
+}
+```
+
+```{r}
+generate_ma_series(10, weight = c(0.5, 0.5))
+```
+
+```{r}
+vec_time <- seq(1, 100, by = 1)
+df_ma_example <- tibble(
+  time = vec_time,
+  MA1_weight_1 = generate_ma_series(100, weights = c(1), seed = SEED),
+  MA1_weight_05 = generate_ma_series(100, weights = c(0.5), seed = SEED),
+  MA2 = generate_ma_series(100, weights = c(0.5, 0.5), seed = SEED),
+  MA20 = generate_ma_series(100, weights = rep(0.05, 20), seed = SEED)
+)
+```
+
+
+```{r}
+df_ma_example %>% 
+  tidyr::pivot_longer(
+    cols = -c(time),
+    names_to = "series",
+    values_to = "value"
+  ) %>%
+  ggplot(aes(time, value)) + 
+  geom_line() + 
+  facet_wrap(~series, ncol = 2, scales = "free_y")
+```
+
+
+<br>
+
+---
+
+<br>
+
+
+# 1.4 AR vs MA Processes
+
+Consider a basic $AR(1)$ process $X_t = \theta X_{t-1} + w_t$, starting with $X_0$, we can write out all future values of $X_t$ as follows:
+
+$$
+\begin{align*}
+X_1 &= \theta X_0 + w_1\\
+X_2 &= \theta^2 X_0 + \theta w_1 + w_2\\
+X_3 &= \theta^3 X_0 + \theta^2 w_1 + \theta w_2 + w_3 \\
+\vdots
+\end{align*}
+$$
+
+Notice in particular that the random shock $w_1$ at time $t=1$ propagates infinitely into the future, $\theta^t w_1\neq 0$ as long as $\theta \neq 0$. 
+
+Contrast this with any $MA(q)$ process 
+$$
+\begin{align*}
+X_t &= \left(\sum_{j=1}^q \theta_jw_{t-j}\right) + w_t\\
+&= (\theta_1w_{t-1} + \ldots + \theta_{t-1}w_1) + w_t 
+\end{align*}
+$$
+
+In particular, notice that the each random shock eventually vanishes completely after $q$-many time steps. From this perspective:
+
+* An $AR(p)$ processes is a time series where random shocks at time $t$ propagate infinitely into the future. Note that the shock can decay and asymptotically converge to 0, but for any time $T > t$, the effect of $w_t$ will always be non-zero.
+
+* An $MA(q)$ process "fixes" this issue by stipulating that random shocks can only propagate a finite number of time steps into the future.
+
+To really drill home this intuition, think about a very pragmatic question: how do we forecast / predict future values of the time series? Concretely, let's say we know that $X_1 = 0$ and $X_2 = 30$. Do we think a far out future value like $X_{100}$ will be positive or negative?
+
+An autoregressive model stipulates that the random shock of +30 will propagate into the future; consequently, this means there is a higher chance that $X_{100}$ will be positive as opposed to negative. So modeling $X_t$ with an autoregressive model *is the same* as believing the current shock of +30 will forever impact the trajectory of the series.
+
+On the other hand, a moving average model stipulates that the random shock of +30 has to die out completely after some finite length. This means for a very far out future value, like $X_{100}$, the impact of the +30 shock will no longer exist. Consequently, $X_{100}$ should be equally likely to be positive as to be negative. So modeling $X_t$ with a moving average model *is the same* as believing the current shock of +30 will eventually be forgotten and the time series will return to a resting baseline eventually.
+
+<br>
+
+---
+
+<br>
+
+# 1.5 Linear Processes and Causality
+
+* A **linear process** is a time series of the form:
+
+$$
+X_t = \mu + \sum_{-\infty}^{\infty}\theta_jw_{t-j}
+$$
+
+Note that since $X_t$ is defined as an infinite sum, an arbitrary choice of weights $\theta_j$ will generally not converge. In order for $X_t$ to be well-defined, we need to also require:
+
+$$
+\sum_{-\infty}^{\infty}\theta_j^2 < \infty
+$$
+
+In other words, a *linear process* is time series where the value $X_t$ at time $t$ is a (possibly infinite) sum of white noise. Notice in particular that the summation goes from $-\infty$ to $\infty$, which means 2 very important things:
+
+1) We are assuming time $t$ can go forwards and backwards infinitely.
+2) We are saying $X_t$ could be dependent on *future* values $w_{t+1}$, $w_{t+2}$, etc. 
+
+The second point is the most important because it identifies a fundamental incompatibility between mathematics and reality. In the real-word, current points in time cannot be dependent on future values in time. This is called **the principal of causality** and motivates the following, more restricted definition: a **causal linear process** is a time series of the form
+
+$$
+X_t = \mu + \sum_{j = 0}^{\infty}\theta_jw_{t-j} \\
+\text{where we require: } \sum_{j=0}^{\infty}\theta_j^2 < \infty
+$$
+
+The index $j$ denotes backward steps in time. In other words, a causal linear process is a time series, where the value $X_t$ at time $t$ is a (possibly infite) sum of all *previous* noise terms (which can potentially stretch back infinitely!).
+
+Intuitively, a linear process (infinite) is just the natural generalization of a moving average process (finite sum).
+
+## Example: MA(q)
+
+As a first example, moving average processes are always causal linear process. By definition an $MA(q)$ process is a time series of the form:
+
+$$
+\begin{align*}
+X_t &= \sum_{j = 1}^q \phi_jw_{t-j} + w_t\\
+&=0 + \sum_{j=0}^{\infty}\theta_jw_{t-j}
+\end{align*}
+$$
+
+where $\theta_j$ is defined as:
+
+$$
+\theta_j = \begin{cases}
+\phi_j & j = 1,\ldots,q \\
+1 & j = 0 \\
+0 & j > q
+\end{cases}
+$$
+
+This isn't too intersting, since linear processes are the generalizations of moving average processes to an infinite sum. In particular, we could just as well define a *causal linear process* as just an $MA(\infty)$ process.
+
+## Example: AR(1)
+
+A more interesting example of an linear process is the autoregressive process of order 1. Consider the definition of an $AR(1)$ process $X_t = \theta X_{t-1} + w_t$. We can apply this definition recursively to get:
+
+$$
+\begin{align*}
+X_t &= \theta X_{t-1} + w_t \\
+&= \theta( \theta X_{t-2} + w_{t-1}) + w_t\\
+&= \theta^2X_{t-2} + \theta w_{t-1} + w_t \\
+&= \theta^2(\theta X_{t-3} + w_{t-2}) + \theta w_{t-1} + w_t \\
+&= \theta^3X_{t-3} + \theta^2w_{t-2} + \theta w_{t-1} + w_t
+\end{align*}
+$$
+
+We can show (by induction) that for any finite $N$:
+
+$$
+X_t = \theta^NX_{t-N} + \sum_{j=1}^{N-1} \theta^j w_{t-j}
+$$
+
+Let's call the quantity on the right $S_N$, that is: $S_N = \theta^NX_{t-N} + \sum_{j=1}^{N-1} \theta^j w_{t-j}$. What we have just shown is that the sequence $S_1, S_2, \ldots, S_N, \ldots$ is always equal to $X_t$ for every term in the sequence. Therefore, when we take the limit, the sequence should converge to $X_t$:
+
+$$
+\begin{align*}
+X_t &= S_N & \text{for all }N\\
+X_t &= \lim_{N\to \infty}S_N \\
+X_t &= \lim_{N\to\infty}\theta^NX_{t-N} + \sum_{j=1}^{N-1}\theta^jw_{t-j}
+\end{align*}
+$$
+
+In order for the limit to converge, we just need $|\theta|<1$, in which case $\theta^NX_{t-N} \to 0$ as $N\to\infty$ and $\sum_{j=1}^{N-1}\theta^jX{t-j}$ becomes a convergent geometric series:
+
+$$
+X_t = \sum_{j=1}^{\infty}\theta^j w_{t-j}
+$$
+
+Therefore: an AR(1) process $X_t = \theta X_{t-1} + w_t$ with weight $|\theta|<1$ is always a *causal linear process*.
+
+In particular, since a causal linear process can also be considered as an MA($\infty$) process, this shows that a *decaying*  AR(1) process is equivalent to an MA($\infty$) process.
+
+## Example: The Mean and Variance Of AR(1)
+
+Since a decaying AR(1) process is a linear process, we can levarage the linearity to compute the mean and variance of any decaying AR(1) process. Specifically, suppose $X_t$ is an AR(1) process: $X_t = \theta X_{t-1} + w_t$ with $|\theta|<1$, then:
+
+$$
+\begin{align*}
+E[X_t] &= E\left[ \sum_{j=1}^{\infty}\theta^j w_{t-j}\right] \\
+&= E\left[ \lim_{N\to \infty} \sum_{j=1}^N \theta^j w_{t-j} \right] \\
+&= \lim_{N\to\infty}E\left[\sum_{j=1}^N \theta^j w_{t-j} \right] \\
+&= \lim_{N\to\infty}\sum_{j=1}^N\theta^j E[w_{t-j}]\\
+&= \lim_{N\to\infty}\sum_{j=1}^N\theta^j\cdot 0\\
+&= 0
+\end{align*}
+$$
+
+So the mean $E[X_t] = 0$. Similarly, we can compute the variance:
+
+$$
+\begin{align*}
+Var[X_t] &= Var\left[ \sum_{j=1}^{\infty}\theta^j w_{t-j}\right] \\
+&= Var\left[ \lim_{N\to \infty} \sum_{j=1}^N \theta^j w_{t-j} \right] \\
+&= \lim_{N\to\infty}Var\left[\sum_{j=1}^N \theta^j w_{t-j} \right] \\
+&= \lim_{N\to\infty}\sum_{j=1}^N\theta^{2j} Var[w_{t-j}]\\
+&= \lim_{N\to\infty}\sum_{j=1}^N\theta^{2j}\cdot \sigma^2\\
+&= \lim_{N\to\infty}\sigma^2\sum_{j=1}^N\theta^{2j}\\
+&= \lim_{N\to\infty}\sigma^2\frac{1-\theta^{2N+2}}{1-\theta^2} \\
+&= \sigma^2\frac{1}{1 - \theta^2}
+\end{align*}
+$$
+
+Note: by definition, an AR(1) process is $X_t = \theta X_{t-1} + w_t$ where $w_t$ is white noise; white noise, by its definition, must have 
+
+1) zero covariance $Cov(w_s, w_t) = 0$ 
+2) uniform variance $Var[w_t] = \sigma^2$
+
+The first property is what allows us to pull the $Var[\cdot]$ operator through the summation (at the cost of squaring the coefficients) and the second property what allows us to replace $Var[w_{t-j}]$ with a single scalar $\sigma^2$.
+
+Note further: observe that if $\theta \geq 1$ then the infinite sum would blow-up to infinity as $N\to \infty$. In particular, this means if $X_t$ is not decaying *and* we are allowed to go back infinitely in time, then the variance at any time $t$ will be infinite. At first this might seem like a contradiction and tell us that non-decaying AR(1) processes can't exist, but really what this is telling us is that the *representation* of an AR(1) process as an infinite sum is only valid when $|\theta| < 1$.
+
+<br>
+
+---
+
+<br>
+
+# 1.6 Other Kinds Of Processes
+
+* A **Gaussian process** is a time series $X_t$ where for any subset of time points $t_1,\ldots,t_k$, the random vector $(X_{t_1},\ldots,X_{t_k})$ is a multivariate Gaussian distribution.
+
+* A **Markov process** is a time series $X_t$ where the expected value of $X_t$ at time $t$ is dependent only on $X_{t-1}$. In other words, the "best guess" for $X_t$ *is based on* just the previous value $X_{t-1}$. Mathematically: 
+
+$$
+E(X_t|X_{t-1},\ldots,X_1) = E(X_t|X_{t-1})
+$$
+
+* A **Martingale** is a Markov process where $E(X_t|X_{t-1},\ldots,X_1) = X_{t=1}$. In other words, a Martingale is a Markov process where the "best guess" for $X_t$ *is straight up* just the previous value $X_{t-1}$.
+
+
+<br>
+
+---
+
+<br>
+

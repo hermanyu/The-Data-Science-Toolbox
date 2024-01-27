@@ -1,0 +1,273 @@
+
+# Setup
+
+```{r, message = FALSE, warning = FALSE}
+options(scipen = 999)
+ROOT <- rprojroot::find_rstudio_root_file()
+
+DATA_DIR <- paste0(ROOT, "/data/kaggle/store-sales-time-series-forecasting/")
+
+SEED <- 1738
+
+library(dplyr)
+library(tidyr)
+library(lubridate)
+library(ggplot2)
+library(scales)
+library(readr)
+```
+
+## Load Data
+
+```{r, warning = FALSE, message = FALSE}
+setwd(DATA_DIR)
+df_transactions <- read_csv("train.csv") %>% 
+  group_by(date) %>% 
+  summarise(
+    transactions = sum(sales, na.rm = TRUE),
+    .groups = "drop"
+  ) 
+```
+
+## Prep Data
+
+
+```{r}
+prep_data <- function(df){
+  df <- df %>% 
+    mutate(
+      transactions = ifelse(month(date) == 12 & mday(date) == 25, 0, transactions),
+      days_since_origin = as.numeric(date - ymd("2013-01-01")),
+      week = week(date),
+      month = month(date),
+      day_of_year = paste0(month(date), "-", mday(date)),
+      day_of_year_num = yday(date),
+      is_new_years_day = ifelse(month(date) == 1 & mday(date) == 1, 1, 0),
+      day_of_december = ifelse(month(date) == 12 & mday(date) < 25, mday(date), 0),
+      post_christmas = ifelse(month(date) == 12 & mday(date) > 25, 1, 0),
+      
+      day_of_week = as.character(wday(date)),
+      day_of_week_num = wday(date),
+      
+      day_of_month = as.character(mday(date)),
+      day_of_month_num = mday(date),
+      
+      is_world_cup_group_stage = as.numeric(date >= "2014-06-12" & date <= "2014-06-26"),
+      is_world_cup_knockout_stage = as.numeric(date >= "2014-06-27" & date <= "2014-07-13"),
+      week_of_year = as.factor(week(date)),
+      day_of_week = as.factor(wday(date, week_start = 1))
+    )
+  
+  return(df)
+}
+
+
+
+df_train <- df_transactions %>% 
+  filter(
+    date <= "2015-12-31"
+  ) %>% 
+  prep_data()
+
+df_test <- df_transactions %>% 
+  filter(
+    date > "2015-12-31",
+    date <= "2016-12-31",
+    date != "2016-02-29"
+  ) %>% 
+  prep_data()
+
+df_validate <- df_transactions %>% 
+  filter(
+    date > "2016-12-31"
+  ) %>% 
+  prep_data()
+```
+
+
+
+## Helper Functions
+
+```{r}
+get_all_predictions <- function(model){
+  bind_rows(
+    tibble(
+      data = "train",
+      date = df_train$date,
+      actual = df_train$transactions,
+      forecast = predict(model, df_train)
+    ),
+    tibble(
+      data = "test",
+      date = df_test$date,
+      actual = df_test$transactions,
+      forecast = predict(model, df_test)
+    )
+  ) %>% 
+    mutate(
+      forecast = case_when(
+        forecast < 0 ~ 0,
+        month(date) == 1 & mday(date) == 1 ~ 0,
+        
+        TRUE ~ forecast
+      ),
+      residual = actual - forecast
+    )
+}
+```
+
+```{r}
+eval_errors <- function(df){
+  
+  df %>% 
+    group_by(
+      data
+    ) %>% 
+    summarise(
+      MSE = mean( (actual-forecast)^2, na.rm = TRUE),
+      root_mslog = sqrt( mean( ( log(1 + forecast) - log(1 + actual) )^2 ) ),
+      MAE = mean(abs( (actual-forecast) ), na.rm = TRUE),
+      .groups = "drop"
+    )
+}
+```
+
+```{r}
+plot_forecast <- function(df){
+  df %>% 
+    ggplot(aes(date)) + 
+    geom_line(aes(y = actual)) + 
+    geom_line(aes(y = forecast, color = data))
+}
+```
+
+
+
+# Base Model: Trend Line
+
+```{r}
+model.base <- lm(
+  transactions ~ days_since_origin,
+  data = df_train
+)
+
+model <- model.base
+train_actuals <- df_train$transactions
+train_preds <- predict(model)
+
+get_all_predictions(model) %>% 
+  eval_errors()
+
+get_all_predictions(model) %>% 
+  plot_forecast()
+```
+
+# Model: Parabolic December Curve
+
+```{r}
+model.lm_december <- lm(
+  transactions ~ days_since_origin + is_new_years_day + day_of_december + post_christmas,
+  data = df_train
+)
+
+model <- model.lm_december
+train_actuals <- df_train$transactions
+train_preds <- predict(model)
+
+get_all_predictions(model) %>% 
+  eval_errors()
+
+get_all_predictions(model) %>% 
+  plot_forecast()
+```
+
+# Day Of Week Seasonality
+
+```{r}
+model.lm_week_season <- lm(
+  transactions ~ days_since_origin + 
+    is_new_years_day + 
+    day_of_december + 
+    post_christmas + 
+    is_world_cup_group_stage + 
+    is_world_cup_knockout_stage + 
+    day_of_week - 1
+  ,
+  data = df_train
+)
+
+model <- model.lm_week_season
+train_actuals <- df_train$transactions
+train_preds <- predict(model)
+
+get_all_predictions(model) %>% 
+  eval_errors()
+
+get_all_predictions(model) %>% 
+  plot_forecast()
+```
+
+
+# Model: GAM
+
+```{r}
+library(mgcv)
+model.gam <- gam(
+  transactions ~ days_since_origin + 
+    is_new_years_day + 
+    s(day_of_year_num, sp = 0.001) + 
+    is_world_cup_group_stage + 
+    is_world_cup_knockout_stage + 
+    day_of_week - 1
+  ,
+  data = df_train
+)
+
+plot(model.gam)
+
+model <- model.gam
+train_actuals <- df_train$transactions
+train_preds <- predict(model)
+
+get_all_predictions(model) %>% 
+  eval_errors()
+
+get_all_predictions(model) %>% 
+  plot_forecast()
+```
+
+
+# Model: Time Fixed Effects
+
+```{r}
+model.time_fe <- gam(
+  transactions ~ -1 + 
+    day_of_year +                    # 366 dummies including feb. 29
+    day_of_week +                    # 6 dummies
+    s(days_since_origin, sp = 0.15)  # trend; might be curvy so using spline
+  ,
+  data = df_train
+)
+
+plot(model.time_fe)
+model <- model.time_fe
+train_actuals <- df_train$transactions
+train_preds <- predict(model)
+
+get_all_predictions(model) %>% 
+  eval_errors()
+
+get_all_predictions(model) %>% 
+  plot_forecast()
+```
+```{r}
+model.time_fe %>% plot()
+```
+
+```{r}
+AIC(model.lm_week_season)
+AIC(model.gam)
+AIC(model.time_fe)
+```
+
+

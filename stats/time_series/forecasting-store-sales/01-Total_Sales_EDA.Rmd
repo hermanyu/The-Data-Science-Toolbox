@@ -1,0 +1,736 @@
+
+# Setup
+
+```{r, message = FALSE, warning = FALSE}
+options(scipen = 999)
+ROOT <- rprojroot::find_rstudio_root_file()
+
+DATA_DIR <- paste0(ROOT, "/data/kaggle/store-sales-time-series-forecasting/")
+
+SEED <- 1738
+
+library(dplyr)
+library(tidyr)
+library(lubridate)
+library(ggplot2)
+library(scales)
+library(readr)
+```
+
+## Data Sets
+
+```{r}
+system(paste0("ls -la ", DATA_DIR))
+```
+
+We have 7 `.csv` files; the major data sets are:
+
+* `train.csv` contains the sales data for the store chain Favorita, located in Ecaudor
+* `stores.csv` contains metadata for individual stores, such as city, state, type and cluster
+* `transactions.csv` gives the total number of transactions for each store, by day
+* `holidays_events.csv` gives holidays and events which might affect store sales
+* `oil.csv` gives oil prices; Ecaudor's economy is oil dependent, so fluctations in oil price can have implications in economic wellbeing
+
+# Forecasting Total Transactions
+
+Let's get our feet wet by starting with a simpler problem: forecast the total daily sales across all stores. This data set is obtained by aggregating together transactions across all stores.
+
+```{r, warning = FALSE, message = FALSE}
+setwd(DATA_DIR)
+df_transactions <- read_csv("train.csv") %>% 
+  group_by(date) %>% 
+  summarise(
+    transactions = sum(sales, na.rm = TRUE),
+    .groups = "drop"
+  ) 
+```
+
+```{r}
+df_transactions %>% 
+  head()
+```
+
+We should break out this time series into a training set and a few validation sets. For time series data, we generally should use the "walk-forward" approach which just says: take the tail-end of the series as our validation set(s).
+
+```{r}
+# look at data range of total data
+df_transactions %>% 
+  summarise(
+    min_date = min(date),
+    max_date = max(date)
+  )
+```
+
+We will use 2013-2015 data as the training set and leave 2016 as a test set. We reserve 2017 as a final validation set to estimate the generalization error; no model tuning will be done using the 2017 data.
+
+```{r}
+df_train <- df_transactions %>% 
+  filter(
+    date <= "2015-12-31"
+  )
+
+df_test <- df_transactions %>% 
+  filter(
+    date > "2015-12-31",
+    date <= "2016-12-31"
+  )
+
+df_validate <- df_transactions %>% 
+  filter(
+    date > "2016-12-31"
+  )
+```
+
+# EDA
+
+## Basic Temporal structures
+
+```{r, fig.width = 8, fig.heigth = 4}
+df_train %>% 
+  ggplot(aes(date, transactions)) + 
+  geom_line() + 
+  scale_y_continuous(label = comma)
+```
+
+Right off the bat, we observe:
+
+* an upward trend
+* seasonal spikes in transactions, especially around the holidays in December
+* 0 transactions at the end of the year; this likely indicates store closures on a specific day each year
+
+## Trend
+
+We can estimate the trend using a basic linear regression of transactions regressed on time. Note that the `date` variable is stored as a datetime object; to avoid possible code errors, we need to coerce it into a integer value.
+
+```{r}
+# re-express the date column as "days since origin" for
+# some origin date; default value is 2013-01-01
+prep_date <- function(df, origin = "2013-01-01"){
+  df <- df %>% 
+    mutate(
+      days_since_origin = as.numeric(date - ymd(origin))
+    )
+}
+
+df_train <- prep_date(df_train)
+```
+
+
+```{r}
+transactions.trend <- lm(
+  transactions ~ days_since_origin,
+  data = df_train
+)
+
+summary(transactions.trend)
+```
+
+Using just a trend line, the $R^2$ is roughly 0.075, so the trend only explains 7.5% of the variance. This isn't to surprising since the trend is relatively small to the daily fluctuations observed in the data.
+
+
+```{r}
+df_train %>% 
+  mutate(
+    trend = predict(transactions.trend)
+  ) %>% 
+  ggplot(aes(x = date)) + 
+  geom_line(aes(y = transactions)) + 
+  geom_line(aes(y = trend), linetype = "dashed", color = "red")
+```
+
+## Controlling For Spikes
+
+Let's see what is going on at those December spikes:
+
+```{r}
+df_train %>% 
+  filter(
+    date >= "2013-10-01",
+    date <= "2014-01-01"
+  ) %>% 
+  ggplot(aes(date, transactions)) + 
+  geom_line()
+```
+
+Two major observations pop-out:
+
+* sales typically begin trending up in December, spiking around Christmas, then falling again
+* January 1st sees 0 sales
+
+To verify that these observations, let's look at the tabular data:
+
+```{r}
+df_train %>% 
+  filter(
+    date >= "2013-12-15",
+    date <= "2014-01-01"
+  ) 
+```
+
+We can probably make very good gains just by controlling for the 0 transactions on New Years Day
+
+```{r}
+prep_new_years_date <- function(df){
+  df <- df %>% 
+    mutate(
+      is_new_years_day = ifelse(month(date) == 1 & day(date) == 1, 1, 0)
+    )
+}
+
+df_train <- prep_new_years_date(df_train)
+```
+
+```{r}
+transactions.lm <- lm(
+  transactions ~ days_since_origin + is_new_years_day,
+  data = df_train
+)
+
+summary(transactions.lm)
+```
+
+We were able to *more than double* the adjusted $R^2$ just by adding a single dummy variable to control for New Years Day! We are likely to make similar gains in model fit by also controlling for the December pattern as well. One approach is to add in 31 dummies: 1 per day of December, but this generally seems like a bad first step as it adds a lot of model complexity to handle a specific portion of the data.
+
+Instead, let's see if there is a parametric form how the December sales behave. That is, do the sales in December seem to follow a curve of some kind? To answer such a question, we subtract out the trend from the data and pool the December points together into a single scatter plot
+
+```{r}
+df_train %>% 
+  mutate(
+    trend = predict(transactions.trend),
+    transactions_detrended = transactions - trend,
+    day_of_month = mday(date),
+    year = year(date)
+  ) %>% 
+  filter(
+    month(date) == 12
+  ) %>% 
+  ggplot(aes(day_of_month, transactions_detrended)) + 
+  geom_point() + 
+  geom_vline(xintercept = 25) + 
+  facet_wrap(~year, ncol = 1, scales = "free_y")
+```
+
+The (detrended) sales in December seem to follow either an exponential or parabolic curve up until Christmas (note that Christmas day is missing from the data). To keep things simple, we will fit a quadratic function on the days of December. To do this, we create a new column that has the day of the month for dates in December, and 0 otherwise. The coefficients to this column can then be interpreted as "devations above the mean" when it is December.
+
+```{r}
+prep_december <- function(df){
+  df <- df %>% 
+    mutate(
+      day_of_december = ifelse(month(date) == 12 & mday(date) < 25, mday(date), 0),
+      post_christmas = ifelse(month(date) == 12 & mday(date) > 25, 1, 0)
+    )
+}
+
+df_train <- prep_december(df_train)
+```
+
+```{r}
+transactions.lm <- lm(
+  transactions ~ days_since_origin + is_new_years_day + day_of_december + post_christmas,
+  data = df_train
+)
+
+summary(transactions.lm)
+```
+
+Adding controls for the holiday shopping of December shoots the adjusted $R^2$ up to 50% of variance explained. Let's take a look at the residual plot and the mean squared error:
+
+```{r}
+df_train %>% 
+  mutate(
+    year = year(date),
+    pred = predict(transactions.lm),
+    residual = transactions - pred
+  ) %>% 
+  ggplot(aes(date, residual)) + 
+  geom_point()
+```
+
+There is still some seasonal oscillations in the residuals across time, which indicates an underlying seasonal trend we are not capturing
+
+```{r}
+# MSE
+df_train %>% 
+  mutate(
+    pred = predict(transactions.lm),
+    residual = transactions - pred
+  ) %>% 
+  summarise(
+    MSE = mean(residual^2, na.rm = TRUE),
+    MAE = mean(abs(residual), na.rm = TRUE)
+  )
+```
+
+# Seasonality
+
+In general, sales activity will follow seasonal trends. We already observed that December has a markedly different behavior as opposed to other months. We want to be able to capture all the seasonal trends that (actually) exist; this helps us leverage as much information as possible when making a forecast.
+
+There a few approaches for how to capture trends:
+
+1) Manual exploration and feature engineering. This is good for exploratory purposes and for quickly capturing high level and intuitive seasonality. However, it can lead to bias because we only capture the patterns we are able to see; there might be seasonal patterns in the data which we, as humans, just miss.
+
+2) Time series decomposition. This method will partition the data into 3 pieces: a trend curve, a seasonality curve, and a the residual values. The trend curve is estimated first, using a smoothing technique (like a moving average or local regression). The trend is then subtracted from the time series and the remaining data points are grouped by seasons (day of year, day of week, month, etc.). The average group value of each season is then taken to estimate the seasonal curve. This seasonal curve is then subtracted from the data to yield the residuals.
+
+3) Time Fixed Effects. This is a common method used for panel data sets: the seasonal groupings are treated like a categorical variable and a dummy variable is used for each group (e.g. 1 dummy variable for each day of week, month, etc). A regression is then taking with these dummy variables along with any other predictors. 
+
+## Manual Exploration
+
+### By Month
+
+```{r}
+df_train %>% 
+  mutate(
+    month = ymd(
+      paste0(
+       year(date), "-",
+        month(date), "-",
+        "01" 
+      )
+    )
+  ) %>% 
+  group_by(month) %>% 
+  summarise(
+    transactions = sum(transactions, na.rm = TRUE),
+    .groups = "drop"
+  ) %>% 
+  ggplot(aes(month, transactions)) + 
+  geom_line()
+```
+
+A very important consideration when aggregating time series data: there are so-called calendar adjustments we need to make. For example January has 31 days while February only has 28 days; this means that total January sales will always have 3 more days of sales than February. We want to control for such artifacts when grouping across time.
+
+One approach is to normalize all the months by looking at "sales per day" for each month:
+
+```{r}
+df_train %>% 
+  mutate(
+    month = ymd(
+      paste0(
+       year(date), "-",
+        month(date), "-",
+        "01" 
+      )
+    )
+  ) %>% 
+  group_by(month) %>% 
+  summarise(
+    transactions_per_day = mean(transactions, na.rm = TRUE),
+    .groups = "drop"
+  ) %>% 
+  ggplot(aes(month, transactions_per_day)) + 
+  geom_line()
+```
+
+There is a slight shift in the height of February, but overall the time series doesn't change too much. We notice an abnormal spike in early 2014, which seems to happen in the month of April. Another seemingly abnormal spike happens in July, but this is likely due to the 2014 FIFA World Cup, which was hosted in Brasil that year. 
+
+```{r}
+df_train %>% 
+  mutate(
+    month = ymd(
+      paste0(
+       year(date), "-",
+        month(date), "-",
+        "01" 
+      )
+    )
+  ) %>% 
+  group_by(month) %>% 
+  summarise(
+    transactions_per_day = mean(transactions, na.rm = TRUE),
+    .groups = "drop"
+  ) %>% 
+  filter(
+    year(month) == 2014
+  )
+```
+
+We're not entire sure how to explain this spike, 
+
+
+### By Week
+
+```{r}
+df_train %>% 
+  mutate(
+    week_num = week(date),
+    year = year(date)
+  ) %>% 
+  group_by(week_num, year) %>% 
+  summarise(
+    transactions = sum(transactions, na.rm = TRUE),
+    .groups = "drop"
+  ) %>% 
+  ggplot(aes(week_num, transactions, color = as.factor(year))) + 
+  geom_line()
+```
+
+At the weekly level, all 3 lines move up and down almost in perfect sync with each other. This indicates a strong seasonal behavior by week. We notice that the oscillations are pretty consistent week-to-week: every decrease is typically followed by a corresponding increase, i.e. the spikes generally occur every other week.
+
+```{r}
+df_train %>% 
+  mutate(
+    week_num = week(date),
+    year = year(date)
+  ) %>% 
+  group_by(week_num, year) %>% 
+  summarise(
+    transactions = sum(transactions, na.rm = TRUE),
+    .groups = "drop"
+  ) %>% 
+  filter(year == 2013) %>% 
+  mutate(
+    first_difference = transactions - dplyr::lag(transactions, n=1),
+    direction = ifelse(first_difference >=0, "increase", "decrease")
+  ) %>% 
+  ggplot(aes(week_num, first_difference)) + 
+  geom_line() + 
+  geom_point(aes(color = direction))
+```
+
+Typically, bi-weekly spikes in sales data correspond to bi-weekly pay schedules; Employees typically get paid on the 15th and end of the month.
+
+### By Day Of Week
+
+Another consideration is that a calendar date will fall on different days of the week, each year. For example, if we look at March 1st of 2013, 2014, and 2015:
+
+```{r}
+df_train %>% 
+  filter(
+    month(date) == 3,
+    mday(date) == 1
+  ) %>% 
+  transmute(
+    date = date,
+    week_of_year = week(date),
+    day_of_week = wday(date, week_start = 1),
+    transactions = transactions
+  )
+```
+
+For 2013, 2014, and 2015 we notice that March 1st falls on a Friday, then Saturday, then Sunday. This corresponds to the fact that the 365 days of a year are not perfectly divisible by 7, there is always a remainder of 1. Note that 2016 is a leap year, so March 1st will be pushed back 2 days onto a Tuesday.
+
+```{r}
+df_train %>% 
+  filter(
+    week(date) == 9
+  ) %>% 
+  mutate(
+    year = as.factor(year(date)),
+    day_of_week = wday(date, week_start = 1)
+  ) %>% 
+  ggplot(aes(day_of_week, transactions, color = year)) + 
+  geom_line() + 
+  labs(title = "Transactions On the Week Of March 1st")
+```
+
+For this one week, we notice that:
+
+* People most of their shopping on Saturday and Sunday, which makes sense since that is when they have time to go out.
+* Wednesdays and Thursdays are generally the quietest time of the week.
+
+We can zoom out and look across multiple weeks to see if this pattern generally holds:
+
+```{r, fig.width = 12, fig.height = 4}
+df_train %>% 
+  mutate(
+    day_of_week = wday(date, week_start = 1),
+    day_of_week_class = case_when(
+      day_of_week %in% c(6,7) ~ "weekend",
+      day_of_week %in% c(3,4) ~ "mid-week",
+      TRUE ~ "other"
+    )
+  ) %>% 
+  ggplot(aes(date, transactions)) +
+  geom_line() + 
+  geom_point(aes(color = day_of_week_class))
+```
+
+We indeed do see that:
+
+1) Weekend transactions (Saturday and Sunday) are almost always higher than the other days of the week.
+2) Mid-week transactions (Wednesday and Thursday) are generally always lower than the other days of the week.
+
+### Feature Engineering Seasonality
+
+Putting all of this together, we can attempt to manually engineer the seasonality. First we already have the trend, New Years Day, and December controls. Next, we add in a dummy variable indicating days which align with the 2014 FIFA World Cup in Brazil. Finally we layer in a dummy variable for each day of week, to capture the spikes that happen on weekends. 
+
+There doesn't seem to be an easy solution for controlling the bi-weekly spikes due to paychecks being released, so we omit that piece for now.
+
+```{r}
+prep_seasonal_features <- function(df){
+  df %>% 
+    mutate(
+      is_world_cup_group_stage = as.numeric(date >= "2014-06-12" & date <= "2014-06-26"),
+      is_world_cup_knockout_stage = as.numeric(date >= "2014-06-27" & date <= "2014-07-13"),
+      week_of_year = as.factor(week(date)),
+      day_of_week = as.factor(wday(date, week_start = 1))
+    )
+}
+
+df_train <- prep_seasonal_features(df_train)
+```
+
+
+```{r}
+transactions.lm <- lm(
+  transactions ~ days_since_origin + 
+    is_new_years_day + 
+    day_of_december + 
+    post_christmas + 
+    is_world_cup_group_stage + 
+    is_world_cup_knockout_stage + 
+    day_of_week - 1
+  ,
+  data = df_train
+)
+
+summary(transactions.lm)
+```
+
+```{r}
+values_to_drop <- c(
+  "days_since_origin",
+  "is_world_cup_group_stage",
+  "is_world_cup_knockout_stage"
+)
+
+lm_coefs <- transactions.lm$coefficients
+
+lm_coefs <- lm_coefs[ !(names(lm_coefs) %in% values_to_drop) ]
+```
+
+```{r, fig.width = 12, fig.height = 4}
+df_train %>% 
+  mutate(
+    pred_day_of_week = case_when(
+      day_of_week == 1 ~ lm_coefs["day_of_week1"],
+      day_of_week == 2 ~ lm_coefs["day_of_week2"],
+      day_of_week == 3 ~ lm_coefs["day_of_week3"],
+      day_of_week == 4 ~ lm_coefs["day_of_week4"],
+      day_of_week == 5 ~ lm_coefs["day_of_week5"],
+      day_of_week == 6 ~ lm_coefs["day_of_week6"],
+      day_of_week == 7 ~ lm_coefs["day_of_week7"],
+    ),
+    pred_is_new_years_day = is_new_years_day * lm_coefs["is_new_years_day"],
+    pred_day_of_december = day_of_december * lm_coefs["day_of_december"],
+    pred_post_christmas = post_christmas * lm_coefs["post_christmas"],
+    
+    pred_seasonality = pred_day_of_week + 
+      pred_is_new_years_day + 
+      pred_day_of_december + 
+      pred_post_christmas
+  ) %>% 
+  ggplot(aes(date, pred_seasonality)) + 
+  geom_line()
+```
+
+
+
+## Time Series Decomposition
+
+A more statistical approach is use a time series decomposition. Since we suspect a strong seasonal pattern by week of year, our seasons, we will specify our seasons as 52 weeks in 1 year.
+
+### Step 1: Compute The Trend
+
+Typically, we compute the trend using a moving average. The sliding window in the moving average is called a **filter**. When the number of seasons $2k + 1$ is odd, we typically use a moving average window, aka a **filter**, centered around each day with $k$ data points on either side. When the number of seasons is $2k$ even, we typically take a moving average of length $2k$ and then take *another* moving average of length 2. Note that this is equivalent to weighting the expanding to a $2k+1$ filter but with the first and last data point weighted by 1/2 as much. Note: this more complicated moving average for even numbers is to ensure that the filter is symmetric; we don't want the future to have more or less weighting than the past.
+
+```{r}
+# 7 days make up 1 week, this is how we "aggregate" individual points for smoothing
+filter_length <- 185
+
+# the filter = the sliding window; 
+# used to compute a weighted sum;
+# also called a "kernel" (b/c same kind of kernel in convolutional NNs)
+filter <- rep(1, filter_length)
+
+df_train %>% 
+  mutate(
+    week_num = week(date),
+    trend = stats::filter(transactions, filter = filter, sides = 2, method = "convolution")/filter_length
+  ) %>% 
+  select(
+    date, transactions, trend
+  ) %>% 
+  ggplot(aes(date)) +
+  geom_line(aes(y = transactions), linetype = "dashed") +
+  geom_line(aes(y = trend), color = "red")
+```
+
+Notice even taking a 185-day average, the spike in December is so large that the trend still exhibits seasonal fluctuations. For this reason, we are better off just manually fitting a trend line via linear regression
+
+```{r}
+transactions.lm <- lm(
+  transactions ~ days_since_origin,
+  data = df_train
+)
+
+linear_trend_vector <- predict(transactions.lm)
+
+df_train %>% 
+  mutate(
+    trend = linear_trend_vector
+  ) %>% 
+  ggplot(aes(date)) + 
+  geom_line(aes(y = transactions), linetype = "dashed") + 
+  geom_line(aes(y = trend), color = "red")
+```
+
+### Step 2: Seasonality
+
+Next, we extract the seasonality by subtracting off the trend component, then grouping the data points by seasons. In our case, all data points which belong the same week will form a grouping. We then compute the seasonality by averaging all the values in each group.
+
+```{r}
+df_seasons <- 
+  df_train %>% 
+  transmute(
+    date = date,
+    week_num = week(date),
+    transactions = transactions,
+    trend = linear_trend_vector,
+    transactions_detrend = transactions - trend
+  ) %>% 
+  group_by(week_num) %>% 
+  mutate(
+    seasonality = mean(transactions_detrend, na.rm = TRUE)
+  ) %>% 
+  ungroup() 
+
+df_seasons %>% 
+  select(
+    -c(week_num, transactions_detrend)
+  ) %>% 
+  pivot_longer(
+    cols = -c(date),
+    names_to = "component",
+    values_to = "value"
+  ) %>% 
+  ggplot(aes(date, value)) + 
+  geom_line() + 
+  facet_wrap(~component, ncol = 1, scales = "free_y")
+```
+
+### The `decompose` Function
+
+We can automate this process by using the `decompose` function in the base `stats` library in R. To use this function, the input needs to be a `ts` time series object, so some formatting is required. Note: the `decompose` function will use the moving average method to compute the trend; we saw before that this method will incorrectly pick-up the seasonality from the December spikes. Nonetheless, it is still a useful tool for exploratory purposes.
+
+```{r}
+transactions_ts <- ts(
+  df_train$transactions,
+  frequency = 365
+)
+
+transactions.ts_decomp <- decompose(transactions_ts, type = "additive")
+
+plot(transactions.ts_decomp)
+```
+
+One of the major drawbacks of classical decomposition is the loss of the tails in the data set; a moving average is only defined for the data points in the middle, because those are the points where we have enough past and future data to compute an average for.
+
+### STL Decomposition
+
+An alternative approach to decomposing time series is the STL decomposition, which stands for "Seasonal and Trend using Loess". In a nutshell, STL will estimate the trend component using a technique called **local regression** which fits a linear regression on a sliding window of data points. We can think of this as the natural next step of the classical decomposition, where instead of a "constant of best fit" (the moving average), we are using a line of best fit (local regression). Consequently, this also means that STL will generally tend to produce more complex trend lines than classical decomposition. This is good if the trend really is a complex curve, but can be very bad if we actually want a simpler trend. In our case, classical decomposition already produced a trend that overfitted, so STL will only exaccerbate the problem. Nonetheless, it's good to just take a look at what happens if we try using STL.
+
+STL decomposition can be done using the `stl()` function in the base `stats` package in R:
+
+```{r}
+transactions.stl_decomp <- stl(
+  transactions_ts,
+  s.window = "periodic",
+  robust = TRUE
+)
+
+plot(transactions.stl_decomp)
+```
+
+### GAMs
+
+The classical method uses a local average, the STL method uses a local linear regression. The next natural step is to use a local polynomial regression. Local polynomial regression can be accomplished by using **splines** which are just piecewise polynomial functions. The regression models which fit splines to the data are called **general additive models (GAMs)**. Note, we can fit a spline to get the trend, but we can just as well fit a spline to get the seasonality as well. This allows us to fit a line when the trend is simply and use a spline for the more complex seasonality.
+
+Note that, because splines are just piecewise polynomials, fitting a GAM is basically what we did to control for the December increase in sales (where we fit a parabola specific to the month of December). GAMs are a scaled up version of this idea, where the model will pick and choose the best polynomials to fit.
+
+The nice thing about GAMs is that we can control the smoothness using a smoothing parameter. To fit a GAM, we will use the `mgcv` package.
+
+```{r, message = FALSE, warning = FALSE}
+library(mgcv)
+
+df_train <- df_train %>% 
+  mutate(
+    day_of_year = yday(date)
+  )
+
+transactions.gam <- gam(
+  transactions ~ s(days_since_origin, sp = 0.01) + 
+    s(day_of_year, sp = 0.001),
+  data = df_train
+)
+
+plot(transactions.gam)
+```
+
+We fitted two splines: the first spline estimates the trend, the second spline estimates the seasonality. Notice that the second spline properly captures the spike in December sales, which no longer show up in the trend.
+
+```{r}
+df_train %>% 
+  mutate(
+    residual = transactions.gam$residuals
+  ) %>% 
+  ggplot(aes(date, residual)) + 
+  geom_point()
+```
+
+```{r}
+tibble(
+  MSE = mean( transactions.gam$residuals^2 ),
+  Log_MSE = log(MSE),
+  MAE = mean( abs(transactions.gam$residuals))
+)
+```
+
+### Other Decompositions
+
+Other decompositions that are possible are:
+
+* The X11 decomposition, which was introduced by the US Census Bureau. This is an augmented version of classical decomposition but the main advantage is that the trend can be estimated to include all observations in the tail-ends.
+
+* The SEATS decomposition, aka Seasonal Extraction in ARIMA Time Series, is a method introduced by the Bank of Spain.
+
+
+## Time Fixed Effects
+
+Finally, we can also construct a dummy variable for each seasonal grouping and fit a regression model to these variables. This is a technique often used in panel regression because the dummy variables are able to soak up any unobserved variables which are dependent only on time (aka "time fixed effects"). 
+
+In our data set, we have 365 days x 3 years = 1,095 observations. If we introduced a dummy variable for each day of the year, we would have a total of 364 dummy variables. This leaves us with $\approx 730$ degrees of freedom left to fit other predictors, e.g. a trend line.
+
+```{r}
+transactions.time_fe <- lm(
+  transactions ~ -1 + 
+    as.factor(day_of_year) + 
+    days_since_origin
+  ,
+  data = df_train
+)
+
+df_train %>% 
+  mutate(
+    pred = predict(transactions.time_fe),
+    residual = transactions - pred
+  ) %>% 
+  ggplot(aes(date, residual)) + 
+  geom_point()
+```
+
+```{r}
+tibble(
+  MSE = mean( transactions.time_fe$residuals^2 ),
+  Log_MSE = log(MSE),
+  MAE = mean( abs(transactions.time_fe$residuals))
+)
+```
+
+
+<br>
+
+---
+
+<br>
+
