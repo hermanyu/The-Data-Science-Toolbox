@@ -1,0 +1,196 @@
+
+# Hypothesis Testing
+
+<br>
+
+---
+
+<br>
+
+# 00 Setup
+```{r, warning = FALSE, message = FALSE}
+options(scipen = 999)
+SEED <- 1738 #i'm like "hey wsup hello"
+
+library(dplyr)
+library(ggplot2)
+```
+
+<br>
+
+---
+
+<br>
+
+# 01 The Motivating Story
+
+Over the weekend, I ran out of coffee beans and need to buy more. I decided to visit a coffee shop by the beach I had never tried before:
+
+```{r, echo = FALSE, out.width="30%", fig.align = "center"}
+knitr::include_graphics("assets/perfectpourcafe.jpg")
+```
+
+I wanted to buy a bag of coffee beans but I couldn't seem to find a roast date on the bag. Of course, I asked the cashier if she happend to know, but she was just as in the dark as me. This presents a problem.
+
+You see, the process of roasting coffee adds CO2 into the beans. When coffee is ground into an espresso powder and brewed, the CO2 gets washed out from the powder and into the brewed coffee. The result is a layer of foam at the top of the espresso called the *creama*, which is a desirable thing to have for a few reasons:
+
+1) Creama is aesthetically pleasing; it gives the espresso a creamy visual. 
+2) CO2 adds acidicity to the espresso, which makes it more appetizing when drinking an espresso straight black. 
+3) The creama also mixes with milk foam to provide a very nice canvas for latte art.
+
+Generally, optimal creama is be created for coffee beans that have been roasted 2-6 weeks earlier. This makes knowing the roast date very important: beans that are too fresh won't allow the CO2 to wash off easily, but beans that are too stale will have already lost too much CO2. For this reason, most boutique coffee roasters will print a roast date on the bag, so that patrons know how long to wait before using the beans.
+
+This frames the central problem for our story: there is an unknown piece of information (the roast date) which we want to know, but there isn't a way directly get it. One option is to use statistics to try and approximate the unknown datum, which leads us to the concept of statistical testing.
+
+<br>
+
+---
+
+<br>
+
+# 02 The Testing Machine
+
+Let's imagine we have a few engineering friends at MIT and we ask them to build us a machine to test our coffee. The machine allows us to place some coffee beans in a chamber, processes it into thick paste, and records the CO2 emitted. Based on the CO2 emission levels, the machine returns a binary result: "Pass" if it thinks the beans were roasted within a 6 week window and "Fail" if it thinks the beans were roasted outside the 6 week window. Our engineering friends tell us to consider some aspects about this machine:
+
+1) The process of testing the beans renders them no longer suitable for brewing coffee. So there is "cost" to testing: we have to sacrifice 1 scoop beans in order to learn the desired information about the rest of the bag. Obviously, using 1 scoop of beans to deduce information about the rest of the bag will inherently open the door **sampling variance**: the CO2 readings from the machine will change from scoop to scoop.
+
+2) Because of sampling variance, there isn't a single fixed number that the machine can use as "the correct answer". Instead the machine looks a range of expected numbers: CO2 readings that fall within the expected range will result in a "Pass", while CO2 readings that fall outside the expected range will result in a "Fail".
+
+3) Because of sampling variance, there will be times where we just so-happen to take a scoop with very high or very low CO2 contents which misrepresents the rest of the bag. These are called **testing errors** and come in two flavors. **Type 1 error** is when the bag is fresh (within 6 weeks) but we just so happen to scoop some beans with a very low CO2 content; in this case, the machine will incorrectly "Fail" the bag when it really should have passed. **Type 2 error** goes the other way, where the bag is stale (more than 6 weeks old) but we just so happen to scoop up the last few coffee beans with high remaining CO2 content; in this case, the machine will incorrectly "Pass" the bag when it really should have failed.
+
+4) The only way to eliminate these errors is to eliminate sampling variance. The most extreme solution is to test the entire bag, but then we would have no more coffee left to drink, which defeats the entire point of testing the coffee in the first place! *However*, sampling variance is not a binary "on/off" switch, we can control how extreme the sampling variance is by using more or less beans in the scoop. Using more beans in the scoop will reduce the sampling variance, allowing for more accurate test results, but comes at the cost of using up more beans. Conversely, using fewer beans will allow us to brew more coffee for actual drinking, but comes increases the chance of an inaccurate test.
+
+5) In a similar vein, we can also control the type 1 and type 2 error rates by manually setting the range of expected CO2 readings. If we lower the range of expected CO2 readings, then it becomes harder for the coffee beans to pass the test. This inherently weeds out more bags of stale beans, just by virtue of failing more bags of beans in general, regardless of being fresh or stale. Conversely, if we increase the range of expected CO2 readings, then it becomes easier for the coffee beans to pass the test. This inherently passes more bags of fresh beans, just by virtue of passing more bags of beans in general, regardless of being fresh or stale.
+
+Ok, with this thought-experiment in mind, let's map everything back to statistical terminalogy:
+
+* The "coffee tester machine" = test statistic
+* The "size of the scoop" = sample size
+* The "sampling variance" = sampling variance (of course it is!); note that the sampling variance is a function of the population variance.
+* The "range of all possible CO2 readings" = sampling distribution of the test statistic
+* The "cutoff point for expected CO2 readings" = p-value (aka the type 1 error rate)
+* The "ability to detect bad beans" = power
+
+So in a nutshell, we should think of a test statistic as just a machine that takes in a sample (1 scoop of beans), does some processing to get a number (CO2 reading), and compares that number against a threshold (p-value). Numbers that fall within the threshold pass the test (the bag is fine) while numbers that fall outside the expected threshold fail the test (the bag is suspicious).
+
+<br>
+
+---
+
+<br>
+
+# 03 Example Using Synthetic Data
+
+As an example, let's try to recreate this thought experiment with actual numbers. Imagine we have a bag of coffee beans and let $\mu_{bag}$ be the average CO2 value for the entire bag. We also know that for a bag to be fresh, the average CO2 content of the bag should be no less than $\mu_0 = 50$. We randomly generate a value for $\mu_{bag}$ and we keep it simulate the real world experience of not knowing what $\mu_{bag}$ actuall is.
+
+```{r}
+set.seed(SEED)
+mu_bag <- runif(1, 40, 65)
+```
+
+Now, we want to determine the value of $\mu_{bag}$ so take a scoop of 20 beans. Let's make the assumption that the CO2 content of each bean is normally distributed around $\mu_{bag}$, with standard deviation 10.
+
+```{r}
+set.seed(SEED)
+
+sample_size = 20
+sd_bag = 10
+
+scoop_of_beans <- rnorm(sample_size, mean = mu_bag, sd = sd_bag)
+
+scoop_of_beans
+```
+
+The average CO2 reading from this scoop of 20 beans is:
+
+```{r}
+mean(scoop_of_beans)
+```
+
+With this setup and data, let's build a "coffee testing machine" aka a test statistic, which will extract the average CO2 content *from the scoop* and compare that against some expected range of numbers. The test statistic we will use is the **z-score**
+
+$$
+z = \frac{\overline{X} - \mu_{bag}}{\frac{\sigma}{\sqrt{N}}}
+$$
+
+where $\overline{X}$ is the mean CO2 of the scoop, the $\mu_{bag}$ is the average CO2 value of the entire bag, $\sigma$ is the standard deviation, and $N$ is the sample size. Obviously, we don't know what $\mu_{bag}$ actually is (that's what we are trying to figure out!), so on face value this machine is completely useless.
+
+However, since we are just trying to gage whether the bag is fresh or not, we don't actually need to know what $\mu_{bag}$ is. Instead, we just need to know whether $\mu_{bag} < 50$ to determine if the bag is fresh or stale. So what we do is ask the following question: *if the bag is fresh* (this is the null hypothesis), would the CO2 readings from the scoop of beans fall into a range that's expected for fresh bags of coffee?
+
+If the bag were fresh, the $\mu_{bag} \geq 50$. Notice that there are many possible values that satisfy $\mu_{bag} \geq 50$, but the sample data is telling us that $\overline{X} = 47.5$. Of all the possible $\mu_{bag}\geq 50$, the hypothesis that most closely aligns with the data is $\mu_{bag} = 50$, so we start here.
+
+Assuming $\mu_{bag}=50$, the z-score of the sample is:
+
+```{r}
+X_bar <- mean(scoop_of_beans)
+mu_null_hypothesis <- 50
+
+z_scoop <- (X_bar - mu_null_hypothesis)/(sd_bag / sqrt(sample_size))
+
+z_scoop
+```
+
+Now, we know that the CO2 contents of each bean in the bag is normally distributed around $\mu_bag$ with $sd_{bag} = 10$. Consequently, this means that the z-score $z_{scoop}$ is follows a *standard normal distribution*. Therefore we can compute the probability of observing a z-score as low as -1.128 by looking at the percentile of this score (aka the p-value of this z-score):
+
+```{r}
+p_scoop <- pnorm(z_scoop, mean = 0, sd = 1)
+
+p_scoop
+```
+
+In other words, there is about a 13% chance that a fresh bag of coffee beans would produce a scoop of beans with a z-score *as low as* our current scoop of beans.
+
+<br>
+
+---
+
+<br>
+
+# Type 1 Error Rate
+
+Now, the immediate question is whether this 13% is reasonable. There is no mathematically justified way of picking a cutoff point between "reasonable" or not. What we *can* do is consider how much "wrong" we are willing to live with. Suppose $\alpha$ is some cutoff point where $p < \alpha$ means conclusive evidence that the bag is stale and $p \geq \alpha$ means inconclusive evidence that the bag is stale. Imagine all the fresh bags of coffee out there. If we were able to test 1 scoop from each of these bag, then we will expect approximately $\alpha \times 100$ percent of the stale bags to accidentally fail the test and be classified as "stale". Therefore the threshold $\alpha$ is called the **type 1 error** rate. 
+
+Generally speaking, we have to decide on $\alpha$ by considering the cost of being wrong. In the case of coffee, a fresh bag of being wrongly labeled as "stale" will cause that coffee to be discounted or thrown out. If a fresh bag of coffee costs 15 dollars and we throw out stale bags of coffee, then the cost of being wrong would be $\alpha \times 15 $.
+
+For example if we set the threshold to $\alpha = 0.05$, then the test would, on average, cause us to throw away 5% of the fresh bags of coffee we buy. This would cost us about $0.05 \times 5 \text{ dollar } = 25 \text{ cents }$ per bag of coffee (in addition to the few cents of coffee beans we use up for the test itself).
+
+<br>
+
+---
+
+<br>
+
+# Power and Type 2 Error
+
+Notice that no matter what we set the threshold $\alpha$ to, there is always a positive probability that we will incorrectly throw out fresh bags of coffee. Consequently, this means that no matter what we set $\alpha$ to, we will incorrectly lose money from the test being wrong. So the only way to not lose any money is to not even do the test! This would be equivalent to setting $\alpha = 0$ and just declaring that all bags of coffee are fresh.
+
+Obviously, this doesn't seem like a reasonable idea and that's because we are ignoring the other side of the story: what happens when our testing machine is right? In other words, if a bag of coffee is stale and the machine is able to correctly screen it, what are the benefits? Let's assume that we are only allowed to open up the bag and test the coffee *after* we have bought it from the store. This means that the 15 dollars for the coffee is a *sunk cost* - it doesn't matter if the coffee is fresh or stale, we're not getting those 15 dollars back. So the only benefits of knowing if the coffee is fresh or stale is is the time and energy we waste on pulling the espresso shot and cleaning the equipment. So the question we would need to answer is: how much is our time and energy worth?
+
+Obviously there is no mathematically objective way to answer a question like this, but the point is that there are benefits to the machine being right when detecting stale coffee. The probability of a testing machine to correctly fail a bag of stale coffee is called it's **statistical power**.
+
+```{r}
+x <- as.Date(c("2021-01-01", "2021-02-01"))
+
+for (i in seq(1, 2, by = 1)) {
+  value <- x[i]
+  print(value)
+}
+```
+```{r}
+attributes(x)
+```
+
+```{r}
+for (value in x) {
+  print(value)
+}
+```
+
+```{r}
+library(dplyr)
+tibble(
+  date = x
+)
+```
+
+

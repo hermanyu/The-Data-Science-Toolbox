@@ -1,0 +1,92 @@
+
+# Power Analysis
+
+Suppose we have a random variable $X \sim N(\mu,\sigma)$ and a null hypothesis $\mu = \mu_0$ for the mean of $X$. We test this hypothesis by collecting a sample of size $N$, say $(x_1,x_2,\ldots,x_N)$, and constructing the test statistic:
+
+$$
+Z = \frac{\overline{X} - \mu_0}{\frac{\sigma}{\sqrt{N}}}
+$$
+
+Let's assume that we have some pre-existing hypothesis on directionality: we are only interested in the case where $\mu > \mu_0$ (i.e. we are measuring a "lift" of some kind). If the null hypothesis is true, then $Z$ should be a standard normal random variable. Notice that as the difference $\overline{X} - \mu_0$ gets large, $Z$ will also get large. Since $Z$ follows a normal distribution, we know that $P(Z > 1.96) \approx 0.05$. Therefore, we decide on the following testing mechanism:
+
+1) Collect a sample of size $N$ and compute the sample statistic $Z$.
+2) For the computed value $Z = z$, compute $P(Z \geq z)$. Assuming the null hypothesis is true, $Z\sim N(0,1)$ which is what makes this computation possible.
+3) If $P(Z \geq z) < 0.05$, we declare that the sample data is too extreme for the null hypothesis to be believable, and we reject the claim that $\mu = \mu_0$.
+
+
+Now we can ask the question: if $\mu$ really was a specific value, say $\mu = \mu'$, what is the probability that our test mechanism would return a "success" (reject the null) or "failure" (do not reject the null)?
+
+Based on the testing mechanism, "success" corresponds to the condition:
+
+$$
+P(Z > z) &\leq 0.05
+$$
+
+This condition is only true when the computed test statistic value is $z > 1.96$. In otherwords:
+
+$$
+P(Z > z) \leq 0.05 \qquad \text{iff} \qquad z \geq 1.96
+$$
+
+So asking "what is the probability we succeed" is equivalent to asking "what is the probability $P(z \geq 1.96)$ given that $\mu = \mu'$?" We call the probability $P(z \geq 1.96)$ the **power** of the test at level $\mu = \mu'$. Intuitively, the power tells us how likely the test mechanism is able to detect $\mu = \mu'$.
+
+Recall how the value of $z$ was computed:
+
+$$
+z = \frac{\overline{X} - \mu_0}{\frac{\sigma}{\sqrt{N}}}
+$$
+
+Now if $\mu = \mu'$, then the true distribution of $X$ would be $X \sim N(\mu', \sigma)$ and consequently:
+
+$$
+\overline{X} \sim N\left(\mu', \frac{\sigma}{\sqrt{N}}\right)
+$$
+
+Then the test statistic $z$ would follow:
+
+$$
+z \sim N(\mu'-\mu_0, 1)
+$$
+From this, the probability that $z \geq 1.96$ can be computed as:
+
+$$
+P(z \geq 1.96) = \int_{1.96}^{\infty}\frac{1}{\sqrt{2\pi}}e^{-\frac{(z - (\mu'-\mu_0))^2}{2}} dz = \text{ some number }
+$$
+
+But recall that $z$ was computed using:
+
+$$
+z = \frac{\overline{X} - \mu_0}{\frac{\sigma}{\sqrt{N}}}
+$$
+and therefore:
+
+$$
+dz = \frac{\sigma}{\sqrt{N}} d\overline{X}
+$$
+
+Finally, if $z = 1.96$, then 
+
+$$
+\begin{align*}
+\frac{\overline{X} - \mu_0}{\frac{\sigma}{\sqrt{N}}} &= 1.96 \\
+\overline{X} - \mu_0 &= \frac{1.96\sigma}{\sqrt{N}} \\
+\overline{X} &= \mu_0 + \frac{1.96\sigma}{\sqrt{N}} \\
+\end{align*}
+$$
+
+Now, we can make a u-substitution in the integral and obtain:
+
+$$
+\begin{align*}
+P(z \geq 1.96) &= \int_{1.96}^{\infty}\frac{1}{\sqrt{2\pi}}e^{-\frac{(z - (\mu'-\mu_0))^2}{2}} dz \\
+&= \int_{\mu_0 + \frac{1.96\sigma}{\sqrt{N}}}^{\infty} \frac{\sqrt{N}}{\sigma\sqrt{2\pi}} e^{-\frac{\left(\frac{\overline{X} - \mu_0}{\sigma/\sqrt{N}} - (\mu'-\mu_0)\right)^2}{2}} d\overline{X}
+\end{align*}
+$$
+
+There is a lot going on in the integral, but the key intuitions and insights are:
+
+1) As $N\to \infty$, the integral gets larger: the lowerbound of integration gets lower (so the integral covers more area), and the integrand tends to $\infty$. This means that as the sample size $N$ gets larger, the power of the test gets larger as well. Intuitively, larger samples allow the test tease out more precise differences.
+
+2) As $\sigma \to \infty$, the integral gets smaller: the lowerbound of integration gets higher (so the integral covers less area), and the integrand tes to 0. This means that as $\sigma$ gets larger, the power of the test gets smaller. Intuitively, the more random the data, the harder it is to tell distinguish between the true effect and random chance.
+
+3) As $\mu' - \mu_0 \to \infty$, the integral will tend to 1. This means that as $\mu'$ becomes more distinct from $\mu_0$, the power of the test increases. Intuitively, it's very easy for a test to detect a true difference if the null hypothesis is very far off from reality.
