@@ -1,0 +1,747 @@
+
+```{r setup, warning = FALSE, }
+options(scipen = 999)
+SEED = 123
+
+library(rethinking)
+library(dplyr)
+library(ggplot2)
+```
+
+# 03 Linear Models
+
+<br>
+
+---
+
+<br>
+
+# Introduction
+
+<br>
+
+# 3.1 A Language For Describing Models
+
+We will define a **model** is a system of equations / formulas that specify the behavior of one or more quantities. For a Bayesian model, this system of equations for should have formulas for each of the following:
+
+1) Parameters and Priors: a set of parameters and a joint prior distribution for all parameters. Usually, we assume parameters are independent so it suffices to supply individual prior distributions for each parameter instead of a joint one.
+
+2) Random Variables and Likelihood: a set of random variables and formulas / equations which describe how the parameters mathematically generate the values of the random variables.
+
+Once these two sets of components have been specified, we can then "fit" the model by using some data set to update the posterior distribution. This can be done using either: a) grid approximation , b) quadratic approximation, c) Markov Chain Monte Carlo.
+
+## Example: Gaussian Model For Weight
+
+```{r}
+# setup an example for a Gaussian model of height;
+# the true_mu and true_sigma values are hidden from us;
+# it is our job to try and solve for them.
+set.seed(SEED)
+true_mu = runif(1, min = 160, max = 180)
+true_sigma = runif(1, min = 15, 25)
+```
+
+
+Suppose we wish to model the weight $Y$ (in pounds) of US adults. We can specify a model using the following system of equations:
+
+$$
+\begin{align*}
+Y &\sim N(\mu, \sigma) & (\text{likelihood}) \\
+\mu &\sim N(150, 40) & (\text{prior for } \mu) \\
+\sigma &\sim \text{HalfCauchy}(20, 2) & (\text{prior for } \sigma)
+\end{align*}
+$$
+
+These 3 formulas describe how the quantities of $\mu$, $\sigma$, and $Y$ behave together; this forms a model for our understanding of the 3 quantities. In the `rethinking` library, we specify a model using a list of formulas:
+
+```{r}
+weight_model <- alist(
+  Y ~ dnorm(mu, sigma),
+  mu ~ dnorm(150, 40),
+  sigma ~ dcauchy(20, 2)
+)
+```
+
+
+We can "improve" the model by observing data. Observing data allows us to learn new information, thereby learning a better understanding of how the quantities relate. This is done via Bayesian updating to derive posterior distributions for $\mu$ and $\sigma$, as well as the posterior predictive distribution for $Y$:
+
+$$
+p(\mu, \sigma |Y_{obs}) \\
+p(Y|\mu_{post}, \sigma_{post})
+$$
+
+To do Bayesian updating, we have to observe some data:
+
+```{r}
+# generate a sample of 100 observations.
+# each number represents the weight of a randomly sampled US adult
+sample_size = 100
+
+Y_obs <- rnorm(n = sample_size, mean = true_mu, sd = true_sigma)
+```
+
+
+<br>
+
+## Fitting The Model With Quadratic Approximation
+
+We can get an approximation of the posterior distribution using quadratic approximation. This can be done by using `optim()` return the mode and hessian of the posterior, but also by simply calling `quap()` from the `rethinking` library:
+
+```{r}
+weight_model_posterior <- quap(
+  flist = weight_model,
+  data = list(Y = Y_obs)
+)
+
+rethinking::precis(weight_model_posterior)
+```
+
+The `precis()` function from the rethinking library returns the mean and standard deviation of the normal distributions used to approximate the posterior of $\mu$ and $\sigma$. Note: we are looking at info about the *marginal* posteriors of $\mu$ and $\sigma$. The *joint posterior* will be a multivariate Gaussian distribution that's described the mean vector $(mu = 167, sigma = 20.41)$ and the covariance matrix:
+
+```{r}
+vcov(weight_model_posterior)
+```
+
+We can draw samples from this posterior using the `extract.samples()` function in the `rethinking` library:
+
+```{r}
+posterior_sample <- extract.samples(
+  object = weight_model_posterior,
+  n = 2000
+)
+
+posterior_sample %>% 
+  as_tibble() %>% 
+  ggplot(aes(x = mu, y = sigma)) + 
+  geom_point(alpha = 0.2)
+```
+
+<br>
+
+---
+
+<br>
+
+#3.2 Simple Linear Regression
+
+## Specifying a Regression Model
+
+Using our weight example, we modeled US adult weight $Y$ using the system of formulas:
+
+$$
+\begin{align*}
+Y | \mu,\sigma &\sim N(\mu, \sigma)\\
+(\mu,\sigma) &\sim \text{some joint distribution}
+\end{align*}
+$$
+
+Note: in the original model, we made the assumption that $\mu$ and $\sigma$ were independent, which allowed us to compute the joint distribution $p(\mu,\sigma)$ by multiplying the individual marginal distributions $p(\mu,\sigma) = p(\mu)\cdot p(\sigma)$. This note becomes important very soon because the set of parameters will change, and assuming independence may no longer be valid.
+
+Now suppose we have an additional piece of information: a person's height. We know that taller people generally weigh more, so we believe there should be a relationship between a person's height $X$ and their weight $Y$. Now, height isn't fully predictive of weight: 2 people with the same height can have different weights, so a good way to think about this relationship instead is to predict the *expected* weight $E(Y)$ at a given height $X$.
+
+This is the same as adjusting the system of equations:
+
+$$
+\begin{align*}
+Y|\mu, \sigma &\sim N(\mu,\sigma)\\
+\mu &=  f_{\beta}(X) \\
+(\beta,\sigma) &\sim \text{some joint distribution}
+\end{align*}
+$$
+
+where $f_{\beta}(X)$ is a function of $X$ whose behavior is controlled by some parameter(s) $\beta$. All regression models are specified in a manner similar to this; different regression models just assume different things for what $f$ can and cannot be.
+
+Note on Model Complexity: There are uncountably infinite many vector valued functions $f:\mathbb{R}^n \to \mathbb{R^m}$. This means there are infinitely many "correct" answers for what the function $f$ can be, given a finite set of data. This is the central challenge with regression models: how do we found the "best" solution when there are infinitely many functions that will always fit the data perfectly? There are 2 general approaches:
+
+1) The **principal of parsimony** says that simpler models are always preferred. As such, we enforce simplifying assumptions about the function $f$ to restrict the space of functions that we consider. For example, linear regression stipulates that $f$ must be linear. Tree-based models stipulate a "max-depth" which limit how many times the trees can branch. Neural networks stipulate a fixed number of layers and nodes, which puts an upper-bound on the theoretical complexity of the network.
+
+2) **Regularization** says that we should enforce some kind of cost function on the complexity of $f$. This way, we can let the model decide whether the extra complexity is worth the cost, by making it "buy" the extra complexity to fit the data better. This is equivalent to stipulating prior distributions on the parameters of the function $f$. For example, ridge regression penalizes the model for using larger coefficients (which is equivalent to placing a prior centered at 0 for the coefficient's possible values). Tree-based models use "pruning" which remove branches that don't contribute some pre-defined threshold of predictive power. Neural networks have a technique called "dropout" which randomly sets some of the parameters to 0 at each gradient descent step; this penalizes the network for becoming too reliant on any one neuron.
+
+<br>
+
+## Generating Synthetic Data
+
+To illustrate fitting a regression model, let's generate some synthetic data. Let $X$ be the height of a US adult (in inches) and $Y$ be the weight of that adult (in pounds). We will pretend the "true" data generation process is as follows:
+
+$$
+Y \sim N(\beta_0 + \beta_1X, \sigma)
+$$
+
+where $\beta_0$, $\beta_1$, and $\sigma$ are hidden to us:
+
+```{r}
+set.seed(SEED)
+# generate secret beta0, beta1, and sigma
+true_beta0 <- runif(1, 110, 130)
+true_beta1 <- runif(1, 0.85, 1)
+true_sigma <- runif(1, 15, 25)
+
+
+# generate a random sample of heights (in inches) of US adults.
+X_sample <- rnorm(1000, mean = 68, sd = 5)
+# X_sample <- ifelse(X_sample < 50, 50, X_sample)  # floor the height to 4'2"
+# X_sample <- ifelse(X_sample > 84, 84, X_sample)  # celiing the height at 7'
+
+# use the secret parameter values to generate weights
+Y_sample <- rnorm(X_sample, mean = true_beta0 + (true_beta1 * X_sample), sd = true_sigma)
+
+# collect data into dataframe
+df_us_adults <- tibble(
+  height = X_sample,
+  weight = Y_sample
+)
+```
+
+```{r}
+# plot our data set of US adult weights
+df_us_adults %>% 
+  ggplot(aes(x = height, y = weight)) + 
+  geom_point() + 
+  xlim(0, 100) + 
+  ylim(0, 250)
+```
+
+<br>
+
+## Simple Linear Regression
+
+The simplest non-constant function is a linear function in a single variable:
+
+$$
+f_{\beta}(X) = \beta_0 + \beta_1X
+$$
+
+If we hypothesize that this function describes the relationship between $E(Y) = \mu = f_{\beta}(X)$, the resulting system of equations is a called a **simple linear regression** model:
+
+$$
+\begin{align*}
+Y | \mu, \sigma &\sim N(\mu,\sigma)\\
+\mu &\sim \beta_0 + \beta_1X \\
+(\beta_0, \beta_1,\sigma) &\sim \text{some joint distribution}
+\end{align*}
+$$
+
+Notice that the prior distribution is a joint distribution of all the parameters $\beta_0$, $\beta_1$, and $\sigma$. It's reasonable to assume that $\sigma$ is still independent from $\beta_0$ and $\beta_1$. *If* $\beta_0$ and $\beta_1$ are also independent (and that's a really big if!), then we may write
+
+$$
+\begin{align*}
+Y | \mu, \sigma &\sim N(\mu,\sigma)\\
+\mu &\sim \beta_0 + \beta_1X \\
+\beta_0 &\sim \text{some distribution} \\
+\beta_1 &\sim \text{some distribution} \\
+\sigma &\sim \text{some distribution}
+\end{align*}
+$$
+
+Once we specify the priors for $\beta_0$, $\beta_1$, and $\sigma$, we can fit the model by computing the (joint) posterior distribution.
+
+<br>
+
+## Example: US Adult Heights and Weights
+
+As an example, let's try to model our data set of US adult weight $Y$ using height $X$ as a predictor. We'll stipulate the following system of formulas:
+
+$$
+\begin{align*}
+Y | \mu, \sigma &\sim N(\mu,\sigma)\\
+\mu &\sim \beta_0 + \beta_1X \\
+\beta_0 &\sim N(0, 200) \\
+\beta_1 &\sim \text{Lognormal}(0.2, 0.5) \\
+\sigma &\sim \text{HalfCauchy}(20, 2)
+\end{align*}
+$$
+
+The priors were chosen because of the following "logic":
+
+* $\beta_0$: We don't have a good feel for what the intercept should be and it's somewhat difficult from looking at the scatter plot to determine a tight range of plausible intercepts. So we choose a relatively flat prior with a slight bump at 0.
+
+* $\beta_1$: We suspect the true slope should be between 0 and 2; people should generally way more as they get taller and it seems reasonable to cap this relationship at 5lbs / inch (i.e. a max of 60lbs/foot of height). As such, the log-normal distribution with log-mean 0.2 and log-sd 0.5 seems to be a reasonable distribution to use.
+
+```{r}
+tibble(
+  x = seq(0, 5, by = 0.1),
+  y = dlnorm(x, meanlog = 0.2, sdlog = 0.5)
+) %>% 
+  ggplot(aes(x = x, y = y )) + 
+  geom_line()
+```
+
+With the model fully specified, we can fit the model by computing the posterior. Grid approximation will take a while to run, so quadratic approximation might be a good choice here (we could also do MCMC, but we save that for later).
+
+```{r}
+# as a reminder: this is the dataframe
+# we are working with
+df_us_adults %>% head()
+```
+
+
+```{r}
+# specify the model a la the rethinking library
+weight_model <- alist(
+  weight ~ dnorm( mu, sigma ),
+  mu <- beta0 + beta1 * height,
+  beta0 ~ dnorm(0, 200),
+  beta1 ~ dlnorm(0.2, 0.5),
+  sigma ~ dcauchy(20, 2) 
+)
+
+weight_model_posterior <- rethinking::quap(
+  flist = weight_model,
+  data = df_us_adults
+)
+```
+
+```{r}
+# inspect the resulting fitted posterior
+precis(weight_model_posterior)
+```
+
+```{r}
+# peak at the covariance matrix
+vcov(weight_model_posterior)
+```
+
+```{r}
+# draw a sample from the posterior to visualize
+posterior_sample <- rethinking::extract.samples(
+  object = weight_model_posterior,
+  n = 2000
+)
+
+posterior_sample %>% 
+  as_tibble() %>% 
+  ggplot(aes(x = beta0, y = beta1)) + 
+  geom_point(alpha = 0.2)
+```
+
+Notice that there is a very strong negative correlation between $\beta_0$ and $\beta_1$. This suggests that our modeling assumption of $\beta_0$ and $\beta_1$ being independent is not valid and this is where the first technical challenge arises.
+
+<br>
+
+## Mean Centering
+
+The estimated joint posterior distribution of $\beta_0$ and $\beta_1$ suggests that $\beta_0$ and $\beta_1$ are not at all independent. To see why, consider the following graphic:
+
+```{r}
+# Example: a scatter plot of points (x,y)
+# For a slope of -0.5, 0, and 0.5, we draw the line of best fit with that slope
+set.seed(SEED)
+x_sample <- runif(100, 10, 50)
+y_sample <- rnorm(x_sample, mean = 0.5*x_sample + 20, sd = 10)
+
+tibble(
+  x = x_sample,
+  y = y_sample
+) %>% 
+  ggplot(aes(x, y)) + 
+  geom_point() + 
+  xlim(0,60) + 
+  ylim(min(y_sample) - 10, max(y_sample + 10)) + 
+  geom_abline(slope = 0, intercept = mean(y_sample), linetype = "dashed", alpha = 0.5) + 
+  geom_abline(slope = 0.5, intercept = 20, linetype = "dashed", color = "blue", alpha = 0.5) + 
+  geom_abline(slope = -0.5, intercept = 49, linetype = "dashed", color = "red", alpha = 0.5)
+```
+
+In the plot, we have a set of data points $(X,Y)$. For any given slope $\beta_1$, there is only 1 line of best fit we can draw with that slope. Once the slope $\beta_1$ is fixed, the line of best fit is completely determined by the intercept $\beta_0$. The key idea is to notice theres a trade-off between the slope and the intercept: as the slope gets larger, the intercept has to get smaller to compensate. This means that the possible combinations of $(\beta_0, \beta_1)$ are *not* independent: larger $\beta_1$ have correlate with smaller $\beta_0$ in order for the line to still pass through the point cloud.
+
+Theoretically, the independence (or lack thereof) on the parameters $\beta_0$ and $\beta_1$ only affects the joint prior $p(\beta_0,\beta_1)$. We know that as the evidence gets stronger (e.g. with larger sample sizes) the effects of the prior gets washed out by the strength of the data, so wrongly assuming $\beta_0$ and $\beta_1$ are independent isn't the end of the world, because the harm can be abated by having a really good and large data set. However, as the number of parameters grow, the strength of the joint prior grows, so you need stronger and stronger data to offset a bad assumption of independence.
+
+Even though strong data will correct inaccurate priors, it's still a good idea to try and resolve these issues without depending on the quality of the data. One possible way to de-correlate $\beta_0$ and $\beta_1$ is by **mean centering**. That is, we transform the predictor variable $X$ by subtracting out the sample mean:
+
+$$
+X' = X - \overline{X}
+$$
+
+So instead of looking at how height $X$ determines expected weight $Y$, we instead look at how *deviations* from the average height $X - \overline{X}$ affect the expected weight $Y$.
+
+```{r}
+# graphical illustration of mean centering
+dplyr::bind_rows(
+  df_us_adults %>% 
+    mutate(
+      dataset = "raw data"
+    ),
+  df_us_adults %>% 
+    mutate(
+      height = height - mean(height),
+      dataset = "mean centered"
+    )
+) %>% 
+  ggplot(aes(x = height, y = weight, color = dataset)) + 
+  geom_point() + 
+  ylim(-100, 300)
+```
+
+Our model thus becomes:
+
+$$
+\begin{align*}
+Y &\sim N(\mu, \sigma) \\
+\mu &= \beta_0 + \beta_1 (X - \overline{X}) \\
+\beta_0 &\sim \text{some distribution} \\
+\beta_1 &\sim \text{some distribution} \\
+\sigma &\sim \text{some distribution} \\
+\end{align*}
+$$
+
+This fundamentally changes the interpretation of the parameters $\beta_0$ and $\beta_1$. When $(X - \overline{X}) = 0$, we must have $X = \overline{X}$. Therefore the "intercept" $\beta_0$ is now the *expected weight for a person with average height*:
+
+$$
+\beta_0 = E(Y|X = \overline{X})
+$$
+
+The "slope" $\beta_1$ is now the expected change in weight $\Delta Y$ for *every inch over the average height*. 
+
+Mean centering $X$ de-correlates $\beta_0$ and $\beta_1$ because the slope can change freely without the need to adjust the $Y$-intercept:
+
+```{r}
+# Example: a scatter plot of points (x,y)
+# For a slope of -0.5, 0, and 0.5, we draw the line of best fit with that slope
+set.seed(SEED)
+x_sample <- runif(100, 10, 50)
+y_sample <- rnorm(x_sample, mean = 0.5*x_sample + 20, sd = 10)
+
+tibble(
+  x = x_sample,
+  y = y_sample
+) %>% 
+  mutate(
+    x = x - mean(x)
+  ) %>% 
+  ggplot(aes(x, y)) + 
+  geom_point() + 
+  xlim(-60,60) + 
+  ylim(min(y_sample) - 10, max(y_sample + 10)) + 
+  geom_abline(slope = 0, intercept = mean(y_sample), linetype = "dashed", alpha = 0.5) + 
+  geom_abline(slope = 0.5, intercept = mean(y_sample), linetype = "dashed", color = "blue", alpha = 0.5) + 
+  geom_abline(slope = -0.5, intercept = mean(y_sample), linetype = "dashed", color = "red", alpha = 0.5)
+```
+
+Since the $Y$-intercept no longer has to adjust to accomodate the slope, it de-correlates $\beta_0$ with $\beta_1$. Consequently, the assumption that $\beta_0$ and $\beta_1$ are independent induces a more accurate prior
+
+```{r}
+df_us_adults$height_mean_centered <- df_us_adults$height - mean(df_us_adults$height)
+
+# re-specify the model using mean centered height
+weight_model <- alist(
+  weight ~ dnorm( mu, sigma ),
+  mu <- beta0 + beta1 * (height_mean_centered),
+  beta0 ~ dnorm(0, 200),
+  beta1 ~ dlnorm(0.2, 0.5),
+  sigma ~ dcauchy(20, 2) 
+)
+
+weight_model_posterior <- rethinking::quap(
+  flist = weight_model,
+  data = df_us_adults
+)
+```
+
+```{r}
+# inspect new model
+precis(weight_model_posterior)
+```
+
+Note that the estimate for $\beta_0$ is now 180.77 pounds; this model is saying that 180.77 pounds is the *expected weight for an average-height individual*. 
+
+Observe further that mean-centering height has de-correlated $\beta_0$ and $\beta_1$:
+
+```{r}
+# inspect covariance matrix
+vcov(weight_model_posterior)
+```
+
+```{r}
+# draw a sample from the posterior to visualize
+posterior_sample <- rethinking::extract.samples(
+  object = weight_model_posterior,
+  n = 2000
+)
+
+posterior_sample %>% 
+  as_tibble() %>% 
+  ggplot(aes(x = beta0, y = beta1)) + 
+  geom_point(alpha = 0.2)
+```
+
+<br>
+
+## The Posterior Predictive Distribution
+
+Each draw from the posterior of $(\beta_0, \beta_1)$ defines a line and each such line defines a possible relationship between $\mu$ and $X$ via:
+
+$$
+\mu = \beta_0 + \beta_1X
+$$
+
+We can visualize this relationship by looking at all the values of $\mu$ defined by each pair of $(\beta_0, \beta_1)$ sampled from the posterior, at various levels of $X$.
+
+```{r}
+min(df_us_adults$height_mean_centered)
+max(df_us_adults$height_mean_centered)
+```
+
+
+```{r}
+posterior_sample %>% 
+  head(20) %>% # use the first 20 sampled points to avoid long runtime
+  select(-sigma) %>% 
+  mutate(
+    combo = as.character(row_number()),
+    key = "key"
+  ) %>% 
+  left_join(
+    tibble(
+      key = rep("key", 101),
+      height_mean_centered = seq(-10, 10, by = 0.20)
+    )
+  ) %>% 
+  select(-key) %>% 
+  mutate(
+    mu = beta0 + beta1 * height_mean_centered
+  ) %>% 
+  ggplot(aes(x = height_mean_centered, y = mu, color = combo)) + 
+  geom_point()
+```
+
+To get the posterior predictive distribution for weight, we do the following:
+
+1) Define a grid of $X$-values to consider. In our case we will be using mean centered height from -10 to 10, with step size 0.2.
+
+2) For each level of $X$, draw a sample of parameter values from the joint posterior distribution $p(\beta_0, \beta_1,\sigma)$. 
+
+3) For each level of $X$ and each sampled parameter value, compute $\mu = \beta_0 + \beta_1 X$.
+
+4) For each $\mu$ value, draw a value of $Y$ according to $Y \sim N(\mu,\sigma)$.
+
+This will result in a sample of $Y$ values for each level of $X$. Each sample of $Y$ values will incorporate the uncertainty of the posterior of $(\beta_0,\beta_1)$ as well as the inherent variability in weights at each specific height.
+
+```{r}
+set.seed(SEED)
+
+posterior_predictive_sample <- tibble(
+  height_mean_centered = numeric(),
+  beta0 = numeric(),
+  beta1 = numeric(),
+  sigma = numeric()
+)
+
+for (x in seq(-20, 20, by = 0.2)){
+  df_temp <- rethinking::extract.samples(
+    weight_model_posterior,
+    n = 200
+  ) %>% 
+    mutate(
+      height_mean_centered = x 
+    )
+  
+  posterior_predictive_sample <- dplyr::bind_rows(
+    posterior_predictive_sample,
+    df_temp
+  ) %>% 
+    mutate(
+      mu = beta0 + (beta1 * height_mean_centered)
+    )
+}
+
+posterior_predictive_sample$sim_weight <- rnorm(
+  posterior_predictive_sample$mu, 
+  mean = posterior_predictive_sample$mu, 
+  sd = posterior_predictive_sample$sigma
+)
+```
+
+```{r}
+# visualize the relationship between weight Y and mean-centered height X
+posterior_predictive_sample %>% 
+  ggplot(aes(x = height_mean_centered, y = sim_weight)) + 
+  geom_point(alpha = 0.2)
+```
+
+The `rethinking` package comes with a pre-built function to automate this whole process called the `sim()` function.
+
+```{r}
+set.seed(SEED)
+predictive_sample <- sim( 
+  weight_model_posterior , # the model
+  data = list(height_mean_centered = seq(-20, 20, by = 0.2) ) , # the predictor values to simulate over
+  n = 200 # number of simulations to draw for each level of the predictor
+)
+```
+
+```{r}
+colnames(predictive_sample) <- seq(-20, 20, by = 0.2)
+
+predictive_sample %>% 
+  as_tibble() %>% 
+  tidyr::pivot_longer(
+    cols = everything(),
+    names_to = "height_mean_centered",
+    values_to = "weight"
+  ) %>% 
+  mutate(
+    height_mean_centered = as.numeric(height_mean_centered)
+  ) %>% 
+  ggplot(aes(x = height_mean_centered, y = weight)) + 
+  geom_point(alpha = 0.2)
+```
+
+
+<br>
+
+---
+
+<br>
+
+# 3.3 Multivariate Linear Regression
+
+## Model Specification
+
+Specifying a linear regression with multiple predictors is a natural extension of the simple linear regression case:
+
+$$
+\begin{align*}
+Y &\sim N(\mu,\sigma) \\
+\mu &= \beta_0 + \beta_1X_1 + \ldots + \beta_k X_k \\
+\beta_0 &\sim \text{some prior} \\
+\beta_1 &\sim \text{some prior} \\
+&\vdots \\
+\beta_k &\sim \text{some prior} \\
+\sigma &\sim \text{some prior}
+\end{align*}
+$$
+
+## Example: Divorce Rates
+
+Let's work with some actual data provided in the `rethinking` library. The dataset in question is the `WaffleDivorce` data set which contains divorce rates for all 50 US states, as well as various other state-level information:
+
+```{r}
+library(rethinking)
+data(WaffleDivorce)
+
+df_divorce <- WaffleDivorce %>% 
+  as_tibble()
+
+df_divorce
+```
+
+The original purpose of this data set was to illustrate the concept of a **spurious** correlation: the divorce rates for a state are positively correlated with the number of waffle houses in that state!
+
+```{r}
+cor(
+  x = df_divorce$Divorce,
+  df_divorce$WaffleHouses
+)
+```
+
+This is an example of a *spurious relationship*: Waffle House is primarily a Southern restaurant chain and the average divorce rate just also happens to be higher in Southern states.
+
+```{r}
+df_divorce %>% 
+  ggplot(aes(x = as.factor(South), y = WaffleHouses)) +
+  geom_point()
+```
+
+
+```{r}
+df_divorce %>% 
+  ggplot(aes(x = as.factor(South), y = Divorce)) +
+  geom_point()
+```
+
+In this case: being a Southern state is a **confounding** variable for Waffle House counts and divorce rates.
+
+<br>
+
+## Fitting A Multivariate Linear Model
+
+Consider the following plot of the Waffle House Divorce Rate data
+
+```{r}
+df_divorce %>% 
+  ggplot(aes(Marriage, Divorce)) + 
+  geom_point() + 
+  geom_smooth(method = "lm", linetype = "dashed", se = FALSE)
+```
+
+There is a positive correlation between marriage rate and divorce rate: states with higher marriage rates also tend to have higher divorce rates. On the surface, this seems to make sense: you can't get divorced unless you are married in the first place. However, since divorce rate is defined as the *percent of divorces amongst married couples*, the aggregate number of married couples should already be accounted for when taking the percentage.
+
+In fact, this association becomes a bit paradoxical as we think about it more. States with higher marriage rates could reasonably have a higher cultural value placed on marriage. If people in a certain state value marriage more, then why would they also be divorcing at a higher rate?
+
+One hypothesis: higher marriage rates might be correlated with more impulsive marriages and impulsive marriages are more likely to end in divorce. How can we investigate this hypothesis? One possible variable to look at is Age:
+
+```{r}
+df_divorce %>% 
+  transmute(
+    Loc = Loc,
+    MedianAgeMarriage = MedianAgeMarriage,
+    Metric = "Marriage",
+    Rate = Marriage
+  ) %>% 
+  dplyr::bind_rows(
+    df_divorce %>% 
+    transmute(
+      Loc = Loc,
+      MedianAgeMarriage = MedianAgeMarriage,
+      Metric = "Divorce",
+      Rate = Divorce
+    )
+  ) %>% 
+  ggplot(aes(x = MedianAgeMarriage, y = Rate)) + 
+  geom_point() + 
+  geom_smooth(method = "lm", se = FALSE, linetype = "dashed") + 
+  facet_wrap(~Metric, ncol = 1)
+```
+
+We see a negative correlation between the median marriage age of a state and both the marriage and divorce rates of the state; states where people wait longer before marriage also tend to have lower marriage and lower divorce rates. 
+In this case, it seems that median marriage age is a confounding variable for marriage and divorce rates. A reasonable question to ask is: what's the relationship between marriage rate and divorce rate, if we "control" for median marriage age by holding it constant? In other words: if two states had the same median marriage age, what would the relationship between marriage and divorce rates be for then?
+
+We can answer this question using a multivariate linear regression. Let $Y$ be the divorce rate of a state, $X_1$ be the marriage rate of the state, and $X_2$ the median marriage age for the state. We specify the following model:
+
+$$
+\begin{align*}
+Y &\sim N(\mu,\sigma) \\
+\mu &= \beta_0 + \beta_1X_1 + \beta_2X_2 \\
+\beta_0 &\sim N(10, 10) \\
+\beta_1 &\sim N(0, 1) \\
+\beta_2 &\sim N(0, 1) \\
+\sigma &\sim \text{Unif}(0, 10)
+\end{align*}
+$$
+
+We will standardize our predictor variables to help decorrelate the parameters (and because it's a good habit to get into).
+
+```{r}
+df_divorce <- df_divorce %>% 
+  mutate(
+    Marriage_standard = ( Marriage - mean(Marriage) ) / sd(Marriage),
+    MedianAgeMarriage_standard = ( MedianAgeMarriage - mean(MedianAgeMarriage) ) / sd(MedianAgeMarriage)
+  )
+
+divorce_model <- alist(
+  Divorce ~ dnorm(mu, sigma),
+  mu <- beta0 + beta1 * Marriage_standard + beta2 * MedianAgeMarriage_standard,
+  beta0 ~ dnorm(10, 10),
+  beta1 ~ dnorm(0, 1),
+  beta2 ~ dnorm(0, 1),
+  sigma ~ dunif(0, 10)
+)
+
+divorce_model_posterior <- quap(
+  flist = divorce_model,
+  data = df_divorce
+)
+```
+
+```{r}
+precis(divorce_model_posterior)
+```
+
+```{r}
+plot( precis( divorce_model_posterior ) )
+```
+```{r}
+vcov(divorce_model_posterior)
+```
+
+Observe that once we control for median marriage age, marriage rate loses most of its predictive power; the coefficient for marriage rate isn't reasonably far enough away from zero and even exhibits a slightly negative correlation with divorce rate.

@@ -1,0 +1,414 @@
+# 001 Probability
+
+--- 
+
+# Introduction
+
+Probability theory is the study of random chance. Fundamentally, a data scientist views the world from the following perspective:
+
+$$
+\text{ Observed Value } = \text{ True Value } + \text{ Random Noise }
+$$
+
+The singular problem all of data science endeavors to solve is this: how do we remove the Random Noise to get the True Value? Reducing to overly simplistic terms:
+
+* Analytics thinks of "True Value" as a population parameter and tries to estimate this parameter using sample data. Statistical inference is used to judge the quality of our estimate. More specifically, we quantify the strength of the random noise and "infer" what would happen if the sampling and analysis was re-done in a future experiment. Doing this requires us to study the nature of the random noise and make mathematical statements about its behavior.
+
+* Machine learning thinks of "True Value" as a function $\tilde{y} = f(x)$ and tries to estimate this function by maximizing predictive accuracy. The quality of the estimated function is judged by its ability to predict on new data. Getting a good estimate for $f(x)$ usually requires us to choose an appropriate learning algorithm and to manipulate the input data into a useful representation.
+
+<br>
+
+# 1.1 Definition
+
+## Naive Definition: Probability As Long Run Convergence
+
+Probability is easy to intuit but hard to rigorously define. For the intuitive definition, pretend we can simulate a random procedure infinitely many times; the probability of event $E$ is the percentage of times $E$ happens in those simulations. For example, if we flip a (fair) coin "infinitely many times", we would expect about %50 of those flips to come up heads, hence we say "probability of flipping heads is 50%".
+
+```{r}
+# Let's build a Coin class that simulates the random flip of a coin
+library(R6)
+
+Coin <- R6Class(
+  "Coin",
+  public = list(
+    # instance data:
+    prob_heads = NULL,
+    
+    # constructor
+    initialize = function(prob_heads = 0.5){
+      self$prob_heads = prob_heads
+    },
+    
+    # methods
+    
+    # flip methods will simulate n-many flips of the coin
+    flip = function(n = 1, keep_numeric = FALSE){
+      # To simulate a single flip, we sample with uniform probability
+      # a number between 0 and 1. If number < prob_heads, we return heads
+      # else return tails.
+      
+      # function is coded to vectorize the process, allowing for simulation
+      # of arbitrary number of flips.
+      result = runif(n, min = 0, max = 1)
+      
+      if (keep_numeric){
+        result = ifelse(result < self$prob_heads, 1, 0)
+      } else {
+        result = ifelse(result < self$prob_heads, "H", "T")
+      }
+      
+      return(result)
+    }
+    
+  )
+)
+
+```
+
+```{r}
+# Testing out our new coin object
+coin <- Coin$new(0.5)
+
+n_flips = 50
+
+# set random seed so results will always match
+set.seed(42)
+coin$flip(n_flips)
+
+set.seed(42)
+coin$flip(n_flips, keep_numeric = TRUE)
+
+# percentage of heads on n_flips = 50 flips
+set.seed(42)
+sum(coin$flip(n_flips, keep_numeric = TRUE))/n_flips
+```
+
+```{r}
+# observe that as n_flips -> infinity, percentage of heads -> 50%
+set.seed(42)
+n_flips = 5
+sum(coin$flip(n_flips, keep_numeric = TRUE))/n_flips
+
+n_flips = 50
+sum(coin$flip(n_flips, keep_numeric = TRUE))/n_flips
+
+n_flips = 500
+sum(coin$flip(n_flips, keep_numeric = TRUE))/n_flips
+
+n_flips = 50000
+sum(coin$flip(n_flips, keep_numeric = TRUE))/n_flips
+
+n_flips = 200000
+sum(coin$flip(n_flips, keep_numeric = TRUE))/n_flips
+```
+
+## Measure Theoretic Definition: Probability via Density Functions
+
+Things become a big more difficult once we start to really scrutinize this intuition. For example, suppose we wish to randomly select an number between 0 and 1. Theoretically, there are infinitely many possible outcomes for a single simulation. How do we define a probability for such a process? If we assume that any number between 0 and 1 are equally likely of being picked, then its unclear what will happen if we simulate an infinite number of times. For example, in our infinites simulations:
+
+* It's possible no number will ever be picked more than once. In this case probability = 1/infinity, which is undefined. 
+
+* It's also possible that some numbers will never be picked at all. In this case probability = 0. But this shouldn't happen for any numbers between 0 and 1, since it's theoretically possible to pick them (so probability > 0).
+
+These kinds issues necessitate a more mathematically technical definition of probability. To intuit such a definition, consider the following thought experiment: 
+
+["Be Curious, Not Judgemental"](https://youtu.be/oZ4YSXv6Xkg?si=DtwhZKLpsxbun88S&t=128)
+
+Suppose we had a 10 x 10 square dart board. The bulls-eye of this dart board is 1 x 1 square in the center. Imagine the dart we throw is infinitely thin, so the tip is the size of a single, infinitesimally small point. If we threw this dart at the dart board, what's the probability we hit the bulls-eye?
+
+There are infinitely many points on the dart board and we theoretically could hit any of them, so this problem is the similar (but not exactly equal) to picking a number between 0 and 1. And yet, there is very easy solution to the dart board problem:
+
+$$
+Pr(\text{Bulls-Eye}) = \frac{\text{Area of Bulls-Eye}}{\text{Area of Dart Board}} = \frac{1 \cdot 1}{10 \cdot 10} = \frac{1}{100} = 0.01
+$$
+
+```{r}
+# create a DartBoard class to simulate throws to 
+# a rectangular dart board with rectangular bulls-eye
+DartBoard = R6Class(
+  "DartBoard",
+  public = list(
+    # instance variables
+    length = NULL,
+    width = NULL,
+    be_length = NULL, # bulls-eye length
+    be_width = NULL,  # bulls-eye width
+    prob_be_length = NULL,  # probability a dart lands within Bulls-Eye length
+    prob_be_width = NULL,   # probability a dart lands within Bulls-Eye width
+    
+    # methods
+    
+    # constructor
+    initialize = function(length = 10, width = 10, be_length = 1, be_width = 1){
+      self$length = length
+      self$width = width
+      if (be_length > length){
+        print("Bulls-Eye length longer than dart board length, capping at dart board length.")
+        self$be_length = length
+      } else {
+        self$be_length = be_length
+      }
+      if (be_width > width){
+        print("Bulls-Eye width wider than dart board width, capping at dart board width.")
+        self$be_width = width
+      } else {
+        self$be_width = be_width
+      }
+      
+      self$prob_be_length = self$be_length/self$length
+      self$prob_be_width = self$be_width/self$width
+    },
+    
+    # throw dart; the dart hits the bulls-eye if and only if
+    # it lands in the correct length AND width.
+    throw_darts = function(n){
+      results_length = runif(n, min = 0, max = 1)
+      results_width = runif(n, min = 0, max = 1)
+      
+      results_length = ifelse(results_length < self$prob_be_length, 1, 0)
+      results_width = ifelse(results_width < self$prob_be_width, 1, 0)
+      
+      results = results_length * results_width
+      
+      return(results)
+    }
+  )
+)
+```
+
+```{r}
+dartboard = DartBoard$new(10, 10, 1, 1)
+
+set.seed(42)
+n_throws = 100
+sum(dartboard$throw_darts(n_throws)) / n_throws
+
+n_throws = 1000
+sum(dartboard$throw_darts(n_throws)) / n_throws
+
+n_throws = 100000
+sum(dartboard$throw_darts(n_throws)) / n_throws
+
+n_throws = 1000000
+sum(dartboard$throw_darts(n_throws)) / n_throws
+```
+
+So what exactly makes the dart board problem "easy", while the number picking problem hard? The essential ingredient for the dart board solution is the concept of "area". The dart board problem is easy because the bulls-eye has a well-defined area of 1. The number picking problem is hard because a point on the number line does not have a well-defined area.
+
+Therefore, if we want to solve the number picking problem, we just need to have a good definition for the "area of a point". This is where *measure theory* comes in; measure theory is the mathematical study of how to "measure" the size of objects, e.g. the "area of a point" in space. A full development of probability from measure theory principles is way beyond what is needed for our discussion. Instead, we'll just shamelessly take the main idea from measure theory without doing any of legwork ourselves.
+
+* Heuristic idea: for any random process, we can always define a probability by transforming the problem into a dart board. The probability is then the area of the bulls-eye within the dart board. 
+
+* More rigorously: the probability of any random event can always be thought of as a region under a curve. The region is the bulls-eye of a dart board.
+
+* Even more rigorously: given a measure space $\Omega$ with probability measure $p:\text{ Subsets of }\Omega \to \mathbb{R}$ and a random variable $X:\Omega\to \mathbb{R}$, we have $\nu(E) = p(X^{-1}(E))$ is a measure on $\mathbb{R}$. By the Radon-Nikodyn theorem, there exists $f:\mathbb{R} \to \mathbb{R}$ such that:
+
+$$
+\nu(E) = \int_E f\,\,d\mu
+$$
+
+Note: in the measure theoretic definition, the measure $\nu$ is the probability that event $E$ happens, aka $Pr(E)$. The symbol $\mu$ is the measure of the space of values $X(\Omega)\subset\mathbb{R}$; this will change depending on whether $X$ is discrete or continuous.
+
+The function $f:\mathbb{R}\to \mathbb{R}$ is called the *Radon-Nikodyn derivative* by measure theorists, but everyone else knows it as the *probability density function*. The key takeaway is that the probability of any event (up to some reasonable constraints) can always be obtained as the **area under a density function** (i.e. the bulls-eye of a dartboard).
+
+
+<br>
+
+---
+
+<br>
+
+# 1.2 Random Variables
+
+## Definition
+
+Given a random process with outcomes $\Omega$, a **random variable** is a function $X:\Omega \to \mathbb{R}$. Simply put, a random variable conducts some kind of measurement from the outcomes of a random process. Here are some examples of random variables:
+
+* $X$ is the number of observed heads in 10 flips of a coin.
+* $X$ is the number of observed 2's in 10 rolls of a die.
+* $X$ is the number of times we roll an even number, in 10 rolls of a die.
+* $X$ is the amount of money we win in 10 games of blackjack.
+
+In more detail, let's consider the first example. Suppose we flip a coin ten times. Then the outcome will a sequence of heads and tails, say (H, H, T, H, T, T, T, H, H, T). If we count the number of observed heads and call it $X$, we have essentially described a function:
+
+$$X : (H, H, T, H, T, T, T, H, H, T) \to 5$$
+
+```{r}
+# Since random variables are functions, this makes them easy to code:
+X <- function(n_flips_outcome){
+  return(sum(ifelse(n_flips_outcome == "H", 1, 0)))
+}
+
+# initialize a new coin object
+coin <- Coin$new(0.5)
+
+# flip the coin 10 times and let random variable X measure the outcome
+outcome = coin$flip(10)
+print("Input: ")
+outcome
+print(paste0("Output: ", X(outcome)))
+print("----------------")
+
+# we can repeat this random procedure of 10 coin flips; X will change
+# based on the data it is observing
+outcome = coin$flip(10)
+print("Input: ")
+outcome
+print(paste0("Output: ", X(outcome)))
+print("----------------")
+
+outcome = coin$flip(10)
+print("Input: ")
+outcome
+print(paste0("Output: ", X(outcome)))
+print("----------------")
+
+outcome = coin$flip(10)
+print("Input: ")
+outcome
+print(paste0("Output: ", X(outcome)))
+print("----------------")
+```
+
+## Density and Distributions 
+
+An **event** $E$ is defined to be a collection of values $E\subset\mathbb{R}$. An event *occurs* if the random variable $X$ takes on a value in the collection $E$, that is: $X \in E$. We are generally interested in the probability that events occur: $Pr(X\in E)$.
+
+The key takeaway from the previous section was this: every random variable $X:\Omega\to\mathbb{R}$ has a corresponding density function $f:\mathbb{R}\to\mathbb{R}$ such that:
+
+$$Pr(X \in E) = \int_E f(x) d\mu$$
+
+So the probability of any event $Pr(X \in E)$ can always be obtained as the area under a density function. The key takeaway is that we study random variables by studying its corresponding density functions. Given a random variable $X$ and function $f$, we say $X$ **has a distribution of $f(x)$** and write $X \sim f(x)$, if $f(x)$ is the density function of $X$.
+
+Note that the measure $\mu$ will change depending on the nature of $X$: when $X$ is discrete, $\mu$ is the **counting measure**. When $X$ is continuous, $\mu$ is the standard Lebesgue measure. Skipping over the technical details, the main result is that the *nature of the integral* (i.e. how the area is computed) changes for discrete vs continuous variables.
+
+
+## Discrete Random Variables
+
+A random variable $X$ is **discrete** if possible values of $X$ are countable and well-separated. In other words, the possible values of $X$ can be labeled by positive integers as in "Outcome 1", "Outcome 2", ... and there is a well-defined gap between any two values. 
+
+When $X$ is discrete, the density function of $X$ will be:
+
+$$
+X \sim \begin{cases}
+p_1 & X = x_1 \\
+p_2 & X = x_2 \\
+\vdots \\
+p_i & X = x_i \\
+\vdots \\
+\end{cases}
+$$
+
+and the integral over an event $E$ is defined as:
+
+$$
+Pr(X\in E) = \int_E f(x)d\mu = \sum_{x_i\in E}p_i
+$$
+
+In other words, the probability that event $E$ occurs is just the sum of all the probabilities across all the outcomes that result in event $E$.
+
+For some intuition how to reconcile the integral (which is an area) with the sum (which is a sum of points), consider the following transformation. Define a new random variable $X'$ such that:
+
+$$
+X' = \begin{cases}
+1 & X = x_1\\
+2 & X = x_2 \\
+\vdots \\
+i & X = x_i\\
+\vdots
+\end{cases}
+$$
+
+Notice that $X'$ and $X$ are "logically equivalent" as random variables:
+
+* Knowing $X' = i$ immediately tells us $X = x_i$ for all $i$
+* Knowing $X = x_i$ immediately tells us $X' = i$ for all $i$ 
+* The probability $X = x_i$ is exactly the same as the probability $X = i$ for all $i$
+
+So for all intents and purposes $X'$ is an equivalent copy of $X$. The key insight here is that there is a cool way to represent the density function of $X'$, as a step function:
+
+$$
+X' \sim \begin{cases}
+p_1 & 0 < X' \leq 1\\
+p_2 & 1 < X' \leq 2\\
+\vdots \\
+p_i & i-1 < X' \leq i\\
+\vdots
+\end{cases} 
+$$
+
+Step functions are integrable in the regular way (as the area under a curve); the area under one step is just a rectangle which has an area of (base) x (height):
+
+$$
+\begin{align*}
+Pr(X \in E) &= Pr(X'\in E') \\
+&= \int_{E'}f(x)dx \\
+&= \sum_{i \in E'}p_i * [i - (i-1)] \\
+&= \sum_{i \in E'}p_i * 1 \\
+&= \sum_{i \in E'}p_i \\
+&= \sum_{x_i \in E}p_i
+\end{align*}
+$$
+
+Where $E'$ is the event defined by $E' = \{i \,\,|\,\,x_i\in E\}$.
+
+## Continuous Random Variables
+
+Defining a continuous random variable in the measure theoretic sense can be quite technically. For heuristic purposes, we'll just say that $X$ is a **continuous random variable** if the density function of $X$ is a continuous function:
+
+$$
+X \sim f(x) \qquad (f\text{ continuous})
+$$
+In this case:
+
+$$
+Pr(X \in E) = \int_E f(x)d\mu
+$$
+It is important to note that this integral is not the standard Riemann integral, but the more general Lebesgue integral. Heuristically, the Lebesgue integral is just the extension of the Riemann integral to weird edge cases. 
+
+In more detail: the Riemann integral measures the area under a curve, over a finite interval:
+
+$$
+Pr(a\leq X \leq b) = \int_a^bf(x)dx
+$$
+
+The Lebesgue integral measures the "area" under a curve, over any "measurable" subset of $\mathbb{R}$:
+
+$$
+Pr(X \in E) = \int_Ef(x)d\mu
+$$
+
+Intervals like $[a,b]$ are Lebesgue measurable subsets and their measure is just their length $\mu([a,b]) = b-a$, so when $E = [a,b]$, the Lebesgue integral will be equal to the Riemann integral:
+
+$$
+\int_Ef(x)d\mu = \int_a^bf(x)dx
+$$
+
+So the Lebesgue integral behaves exactly the same as the Riemann integral when our event space $E$ is an interval of values.
+
+However, the main power of the Lebesgue integral comes from event spaces $E$ which don't have a nice representation as an interval. For example, suppose that $E$ is the set of irrational numbers between 0 and 1:
+
+$$
+E = \{x \,\,|\,\, 0 < x < 1 \text{ and } x \notin \mathbb{Q}\} = (0,1) \cap \mathbb{Q}^c
+$$
+The Riemann integral is undefined over such a region, but the Lebesgue integral *is defined* and can actually be computed. In short, the Lebesgue integral is just an extension of the Riemann integral to handle regions of space which aren't intervals.
+
+<br>
+
+---
+
+<br>
+
+# 1.3 The Armada of Distributions
+
+## Discrete Random Variables
+
+### The Uniform Distribution
+
+
+
+
+
+
+
+
